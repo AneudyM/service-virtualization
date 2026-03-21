@@ -1,0 +1,7 @@
+/vendor/
+/.env
+/.env.local
+/var/
+/reports/
+*.log
+.phpunit.result.cache
