@@ -10,6 +10,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../vendor/autoload.php';
 
+use App\Controller\AipriseController;
 use App\Controller\ComplianceController;
 use App\Controller\ControlPlaneController;
 use App\Core\Database;
@@ -55,7 +56,7 @@ $namespace = $_SERVER['HTTP_X_TEST_NAMESPACE']
 
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, X-Test-Namespace');
+header('Access-Control-Allow-Headers: Content-Type, X-Test-Namespace, X-API-KEY');
 
 if ($method === 'OPTIONS') {
     http_response_code(204);
@@ -166,6 +167,94 @@ $router->get('/api/compliance/sessions/{sessionRef}/url', function ($p) use ($na
 $router->get('/api/compliance/sessions/{sessionRef}/history', function ($p) use ($namespace) {
     requireNamespace($namespace);
     ComplianceController::getSessionHistory($p['sessionRef'], $namespace);
+});
+
+// ── AiPrise-Faithful API (drop-in replacement for real AiPrise) ──────────
+
+// Priority 1: KYC Individual Verification
+$router->post('/api/v1/verify/get_user_verification_url', function () use ($namespace, $body) {
+    AipriseController::getUserVerificationUrl($body, $namespace);
+});
+
+$router->post('/api/v1/verify/run_user_verification', function () use ($namespace, $body) {
+    AipriseController::runUserVerification($body, $namespace);
+});
+
+$router->get('/api/v1/verify/get_user_verification_result/{sessionId}', function ($p) use ($namespace) {
+    AipriseController::getUserVerificationResult($p['sessionId'], $namespace);
+});
+
+// Internal self-callback for auto-completion (NOT part of real AiPrise API)
+$router->post('/api/v1/verify/_internal/auto-complete/{sessionId}', function ($p) use ($body) {
+    AipriseController::autoComplete($p['sessionId'], $body);
+});
+
+// Business KYB: Real implementation for URL-based flow
+$router->post('/api/v1/verify/get_business_verification_url', function () use ($namespace, $body) {
+    AipriseController::getBusinessVerificationUrl($body, $namespace);
+});
+
+$router->get('/api/v1/verify/get_business_verification_result/{sessionId}', function ($p) use ($namespace) {
+    AipriseController::getBusinessVerificationResult($p['sessionId'], $namespace);
+});
+
+// Internal self-callback for KYB auto-completion
+$router->post('/api/v1/verify/_internal/auto-complete-kyb/{sessionId}', function ($p) use ($body) {
+    AipriseController::autoCompleteKyb($p['sessionId'], $body);
+});
+
+// Business KYB: API-driven verification (submit flow)
+$router->post('/api/v1/verify/run_business_verification', function () use ($namespace, $body) {
+    AipriseController::runBusinessVerification($body, $namespace);
+});
+
+// Business KYB: API-driven stubs (lower priority)
+$router->post('/api/v1/verify/create_business_profile', function () use ($body) {
+    AipriseController::createBusinessProfile($body);
+});
+
+$router->post('/api/v1/verify/add_business_document', function () use ($body) {
+    AipriseController::addBusinessDocument($body);
+});
+
+$router->post('/api/v1/verify/add_business_officer', function () use ($body) {
+    AipriseController::addBusinessOfficer($body);
+});
+
+$router->post('/api/v1/verify/run_verification_for_business_officer', function () use ($body) {
+    AipriseController::runVerificationForBusinessOfficer($body);
+});
+
+$router->post('/api/v1/verify/run_verification_for_business_profile_id', function () use ($body) {
+    AipriseController::runVerificationForBusinessProfileId($body);
+});
+
+$router->get('/api/v1/verify/get_business_data_from_request/{verificationId}', function ($p) {
+    AipriseController::getBusinessDataFromRequest($p['verificationId']);
+});
+
+$router->get('/api/v1/verify/get_business_profile/{verificationId}', function ($p) {
+    AipriseController::getBusinessProfile($p['verificationId']);
+});
+
+// ── AiPrise Control Plane ───────────────────────────────────────────────
+
+// KYC Control Plane
+$router->post('/control/aiprise/{sessionId}/complete', function ($p) use ($body) {
+    AipriseController::controlComplete($p['sessionId'], $body);
+});
+
+$router->get('/control/aiprise/sessions', function () use ($namespace) {
+    AipriseController::listSessions($namespace);
+});
+
+// KYB Control Plane
+$router->post('/control/aiprise-kyb/{sessionId}/complete', function ($p) use ($body) {
+    AipriseController::controlCompleteKyb($p['sessionId'], $body);
+});
+
+$router->get('/control/aiprise-kyb/sessions', function () use ($namespace) {
+    AipriseController::listKybSessions($namespace);
 });
 
 // ── Dispatch ─────────────────────────────────────────────────────────────────

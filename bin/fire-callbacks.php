@@ -1,10 +1,10 @@
 #!/usr/bin/env php
 <?php
 /**
- * Callback firing script — run via cron or manually.
+ * Callback firing script -- run via cron or manually.
  *
  * Cron entry (every 5 minutes):
- *   */5 * * * * cd /home/in/intelycs.com/service-virtualization; /usr/bin/php bin/fire-callbacks.php
+ *   0,5,10,15,20,25,30,35,40,45,50,55 * * * * cd /path/to/service-virtualization; php bin/fire-callbacks.php
  *
  * Or trigger via HTTP:
  *   POST /control/fire-callbacks

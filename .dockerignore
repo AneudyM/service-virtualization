@@ -1,0 +1,11 @@
+vendor
+.env
+.env.local
+.git
+.idea
+var
+reports
+*.log
+*.md
+demo.ps1
+demo.sh
