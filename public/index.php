@@ -11,8 +11,10 @@ declare(strict_types=1);
 require_once __DIR__ . '/../vendor/autoload.php';
 
 use App\Controller\AipriseController;
+use App\Controller\BridgeController;
 use App\Controller\ComplianceController;
 use App\Controller\ControlPlaneController;
+use App\Controller\EmailController;
 use App\Core\Database;
 use App\Core\JsonResponse;
 use App\Core\RequestLogger;
@@ -98,6 +100,12 @@ $router->get('/health', function () {
     JsonResponse::ok(['status' => 'healthy', 'db' => $dbStatus]);
 });
 
+// ── Browser-Facing Verification Page (AiPrise) ──────────────────────────────
+
+$router->get('/verify', fn() =>
+    AipriseController::verifyPage()
+);
+
 // ── Control Plane ────────────────────────────────────────────────────────────
 
 $router->get('/control/scenarios', fn() =>
@@ -127,6 +135,68 @@ $router->get('/control/history/{namespace}', fn($p) =>
 $router->post('/control/cleanup-expired', fn() =>
     ControlPlaneController::cleanupExpired()
 );
+
+// ── KYB Approval (quick action via penny-api) ───────────────────────────────
+
+$router->post('/control/approve-kyb/{businessId}', function ($p) {
+    $businessId = $p['businessId'];
+    $pennyApiUrl = 'http://penny-api:3003';
+
+    $ch = curl_init("{$pennyApiUrl}/api/v1/third-party-service/business/{$businessId}");
+    curl_setopt_array($ch, [
+        CURLOPT_CUSTOMREQUEST  => 'PUT',
+        CURLOPT_POSTFIELDS     => json_encode(['KYB' => true]),
+        CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT        => 5,
+    ]);
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($httpCode >= 200 && $httpCode < 300) {
+        $data = json_decode($response, true);
+        error_log("╔══════════════════════════════════════════════════╗");
+        error_log("║  KYB APPROVED: Business #{$businessId}");
+        error_log("║  Name: " . ($data['name'] ?? 'unknown'));
+        error_log("╚══════════════════════════════════════════════════╝");
+        JsonResponse::send([
+            'approved'   => true,
+            'businessId' => (int) $businessId,
+            'name'       => $data['name'] ?? null,
+            'KYB'        => true,
+        ], 200);
+    } else {
+        JsonResponse::error("Failed to approve business #{$businessId}: HTTP {$httpCode}", 502);
+    }
+});
+
+$router->get('/control/pending-kyb', function () {
+    $pennyApiUrl = 'http://penny-api:3003';
+
+    $ch = curl_init("{$pennyApiUrl}/api/v1/third-party-service/business");
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT        => 5,
+    ]);
+    $response = curl_exec($ch);
+    curl_close($ch);
+
+    $businesses = json_decode($response, true) ?? [];
+    $pending = array_filter($businesses, fn($b) => !($b['KYB'] ?? false));
+    $pending = array_values($pending);
+
+    JsonResponse::send([
+        'pending_count' => count($pending),
+        'businesses'    => array_map(fn($b) => [
+            'id'        => $b['id'] ?? null,
+            'name'      => $b['name'] ?? null,
+            'email'     => $b['email'] ?? null,
+            'KYB'       => $b['KYB'] ?? false,
+            'createdAt' => $b['createdAt'] ?? null,
+        ], $pending),
+    ], 200);
+});
 
 // ── Virtual Compliance Service (Aiprise replacement) ─────────────────────────
 
@@ -255,6 +325,48 @@ $router->post('/control/aiprise-kyb/{sessionId}/complete', function ($p) use ($b
 
 $router->get('/control/aiprise-kyb/sessions', function () use ($namespace) {
     AipriseController::listKybSessions($namespace);
+});
+
+// ── Virtual Bridge API ───────────────────────────────────────────────────────
+
+// AlfredPay wrapper surface (called by penny-api when usa-bridge-integration is not present)
+$router->post('/v1/auth/token', function () use ($body) {
+    BridgeController::authToken($body);
+});
+
+$router->post('/v1/bridge/terms-conditions', function () use ($body) {
+    BridgeController::termsConditions($body);
+});
+
+// Real Bridge API surface (called by usa-bridge-integration)
+$router->post('/customers/tos_links', function () use ($body) {
+    BridgeController::customersTosLinks($body);
+});
+
+$router->post('/kyc_links', function () use ($body) {
+    BridgeController::kycLinks($body);
+});
+
+// Browser-facing T&C acceptance page (loaded in iframe)
+$router->get('/bridge/tos-page', function () {
+    BridgeController::tosPage();
+});
+
+// ── Virtual Email Service ────────────────────────────────────────────────────
+
+// OTP verification email (registration + login)
+$router->post('/api/stub/email/email/verification-otp', function () use ($body) {
+    EmailController::sendOtp($body);
+});
+
+// Password recovery email
+$router->post('/api/stub/email/cms/reset-password', function () use ($body) {
+    EmailController::resetPassword($body);
+});
+
+// Password confirmation email
+$router->post('/api/stub/email/cms/confirm-password', function () use ($body) {
+    EmailController::confirmPassword($body);
 });
 
 // ── Dispatch ─────────────────────────────────────────────────────────────────

@@ -440,6 +440,154 @@ final class AipriseController
         ], 200);
     }
 
+    // ── Browser-Facing Verification Page ─────────────────────────────────────
+
+    /**
+     * GET /verify
+     *
+     * Browser-facing verification page loaded by the CMS frontend after Bridge
+     * T&C acceptance. Supports both KYC and KYB session types via query params:
+     *   ?verification_session_id=...         (KYC individual)
+     *   ?business_onboarding_session_id=...  (KYB business)
+     *
+     * When the user clicks "Complete Verification", the page triggers the
+     * auto-complete endpoint which fires the webhook back to penny-api-restricted.
+     */
+    public static function verifyPage(): never
+    {
+        $sessionId = $_GET['verification_session_id']
+            ?? $_GET['business_onboarding_session_id']
+            ?? 'unknown';
+        $isKyb = isset($_GET['business_onboarding_session_id']);
+        $sessionType = $isKyb ? 'KYB (Business)' : 'KYC (Individual)';
+        $autoCompleteEndpoint = $isKyb
+            ? "/api/v1/verify/_internal/auto-complete-kyb/{$sessionId}"
+            : "/api/v1/verify/_internal/auto-complete/{$sessionId}";
+        $internalUrl = $_ENV['APP_INTERNAL_URL'] ?? 'http://localhost';
+
+        header('Content-Type: text/html; charset=UTF-8');
+        http_response_code(200);
+
+        echo <<<HTML
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Identity Verification | AiPrise</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            min-height: 100vh;
+            background: #fff;
+            color: #0f172a;
+            -webkit-font-smoothing: antialiased;
+        }
+        main { max-width: 24rem; margin: 0 auto; height: 100vh; }
+        .container {
+            display: flex; flex-direction: column; align-items: center;
+            justify-content: center; min-height: 100vh; padding: 1.5rem;
+        }
+        .card {
+            position: relative; width: 100%; max-width: 28rem;
+            border: 1px solid #e2e8f0; border-bottom-width: 2px;
+            border-radius: 0.5rem; background: #fff; padding: 2rem;
+        }
+        @media (min-width: 640px) { .card { width: 420px; padding: 3rem; } }
+        .badge {
+            position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
+            display: inline-block; background: #fff3cd; color: #856404;
+            padding: 4px 12px; border-radius: 4px; font-size: 11px;
+            font-weight: 700; letter-spacing: 0.5px; border: 1px solid #ffc107;
+            white-space: nowrap;
+        }
+        .icon {
+            width: 80px; height: 80px; margin: 0 auto 1.5rem;
+            background: #f0f9ff; border-radius: 50%; display: flex;
+            align-items: center; justify-content: center; font-size: 36px;
+        }
+        .content { text-align: center; }
+        h1 { font-size: 1.25rem; margin-bottom: 0.5rem; }
+        .type-badge {
+            display: inline-block; background: #e0f2fe; color: #0369a1;
+            padding: 3px 10px; border-radius: 12px; font-size: 0.75rem;
+            font-weight: 600; margin-bottom: 1rem;
+        }
+        .description { font-size: 0.9375rem; line-height: 1.5; margin-bottom: 1.5rem; color: #475569; }
+        .session-id {
+            background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;
+            padding: 0.75rem; font-size: 0.75rem; color: #64748b;
+            font-family: monospace; word-break: break-all; margin-bottom: 1.5rem;
+        }
+        button {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 100%; height: 3rem; background: #059669; color: #fff;
+            border: none; border-radius: 0.375rem; font-family: inherit;
+            font-size: 1rem; font-weight: 500; cursor: pointer;
+            transition: background-color 0.15s;
+        }
+        button:hover { background: #047857; }
+        button:disabled { background: #94a3b8; cursor: not-allowed; }
+        .status { text-align: center; margin-top: 1rem; font-size: 0.875rem; color: #059669; }
+        .status.error { color: #dc2626; }
+    </style>
+</head>
+<body>
+    <main>
+        <div class="container">
+            <div class="card">
+                <div class="badge">VIRTUAL SERVICE</div>
+                <div class="icon">🛡️</div>
+                <div class="content">
+                    <h1>Identity Verification</h1>
+                    <div class="type-badge">{$sessionType}</div>
+                    <p class="description">
+                        This is a virtual AiPrise verification page. Clicking "Complete Verification"
+                        will approve the session and fire the webhook callback to penny-api-restricted.
+                    </p>
+                    <div class="session-id">Session: {$sessionId}</div>
+                    <button id="completeBtn" onclick="completeVerification()">Complete Verification</button>
+                    <div id="status" class="status"></div>
+                </div>
+            </div>
+        </div>
+    </main>
+    <script>
+        async function completeVerification() {
+            const btn = document.getElementById('completeBtn');
+            const status = document.getElementById('status');
+            btn.disabled = true;
+            btn.textContent = 'Processing...';
+            status.textContent = '';
+            try {
+                const res = await fetch('{$internalUrl}{$autoCompleteEndpoint}', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ outcome: 'APPROVED' }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    btn.textContent = 'Verified ✓';
+                    btn.style.background = '#047857';
+                    status.textContent = 'Verification approved. Webhook callback sent. You can close this page.';
+                } else {
+                    throw new Error(data.message || 'Verification failed');
+                }
+            } catch (e) {
+                btn.disabled = false;
+                btn.textContent = 'Complete Verification';
+                status.textContent = 'Error: ' + e.message;
+                status.className = 'status error';
+            }
+        }
+    </script>
+</body>
+</html>
+HTML;
+        exit;
+    }
+
     private static function generateUuid(): string
     {
         $data = random_bytes(16);
