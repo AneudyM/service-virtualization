@@ -463,7 +463,7 @@ final class AipriseController
         $autoCompleteEndpoint = $isKyb
             ? "/api/v1/verify/_internal/auto-complete-kyb/{$sessionId}"
             : "/api/v1/verify/_internal/auto-complete/{$sessionId}";
-        $internalUrl = $_ENV['APP_INTERNAL_URL'] ?? 'http://localhost';
+        $baseUrl = $_ENV['APP_BASE_URL'] ?? 'http://localhost:8080';
 
         header('Content-Type: text/html; charset=UTF-8');
         http_response_code(200);
@@ -561,7 +561,7 @@ final class AipriseController
             btn.textContent = 'Processing...';
             status.textContent = '';
             try {
-                const res = await fetch('{$internalUrl}{$autoCompleteEndpoint}', {
+                const res = await fetch('{$baseUrl}{$autoCompleteEndpoint}', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ outcome: 'APPROVED' }),
