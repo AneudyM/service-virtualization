@@ -218,12 +218,23 @@ final class AipriseService
             'environment'             => 'SANDBOX',
         ];
 
-        // Include check results only when completed
+        // Include check results only when completed, filtered by template
         if ($isCompleted) {
-            $response['id_info'] = self::buildIdInfo($verificationResult, $userData, $countryCode);
-            $response['face_match_info'] = self::buildFaceMatchInfo($verificationResult);
-            $response['face_liveness_info'] = self::buildFaceLivenessInfo($verificationResult);
-            $response['aml_info'] = self::buildAmlInfo($verificationResult);
+            $template = TemplateRegistry::getOrDefault($data['template_id'] ?? '');
+            $checks = $template['checks'];
+
+            if (in_array('id_check', $checks, true)) {
+                $response['id_info'] = self::buildIdInfo($verificationResult, $userData, $template);
+            }
+            if (in_array('face_match', $checks, true)) {
+                $response['face_match_info'] = self::buildFaceMatchInfo($verificationResult);
+            }
+            if (in_array('liveness', $checks, true)) {
+                $response['face_liveness_info'] = self::buildFaceLivenessInfo($verificationResult);
+            }
+            if (in_array('aml', $checks, true)) {
+                $response['aml_info'] = self::buildAmlInfo($verificationResult);
+            }
         }
 
         // Include user input data
@@ -517,6 +528,84 @@ final class AipriseService
         }, $entities);
     }
 
+    // ── Public Session Accessors (for verify page) ────────────────────────
+
+    /**
+     * Look up any session (KYC or KYB) by its verification_session_id.
+     * Returns the full entity row including data, or null if not found.
+     *
+     * Used by the verify page to retrieve session data (template_id, user_data)
+     * without exposing the private KYC/KYB finders.
+     */
+    public static function lookupSession(string $sessionId): ?array
+    {
+        // Try KYC first
+        $entity = self::findSession($sessionId, null);
+        if ($entity !== null) {
+            return $entity;
+        }
+
+        // Try KYB
+        return self::findKybSession($sessionId, null);
+    }
+
+    /**
+     * Cancel any pending auto-complete callbacks for a session.
+     * Called when the verify page loads so the user has time to fill in the form
+     * without the auto-complete timer firing first.
+     */
+    public static function cancelPendingCallbacks(string $sessionId): void
+    {
+        $entity = self::lookupSession($sessionId);
+        if ($entity === null) {
+            return;
+        }
+
+        $pdo = Database::connect();
+        $pdo->prepare("
+            UPDATE pending_callbacks
+            SET status = 'cancelled'
+            WHERE entity_id = :eid AND status = 'pending'
+        ")->execute(['eid' => (int)$entity['id']]);
+    }
+
+    /**
+     * Update the user_data within a session's stored data.
+     * Deep-merges $formData into the existing user_data.identity subkey.
+     *
+     * Used by the verify page to persist form field values (e.g., identity_number)
+     * before triggering auto-complete, so the webhook payload includes them.
+     */
+    public static function updateSessionUserData(string $sessionId, array $formData): bool
+    {
+        $entity = self::lookupSession($sessionId);
+        if ($entity === null) {
+            return false;
+        }
+
+        $data = $entity['data'];
+        $userData = $data['user_data'] ?? [];
+
+        // Merge identity fields into user_data.identity
+        if (isset($formData['identity_number'])) {
+            $userData['identity'] = $userData['identity'] ?? [];
+            $userData['identity']['identity_number'] = $formData['identity_number'];
+        }
+        if (isset($formData['identity_number_type'])) {
+            $userData['identity'] = $userData['identity'] ?? [];
+            $userData['identity']['identity_number_type'] = $formData['identity_number_type'];
+        }
+
+        // Merge top-level fields (first_name, last_name, date_of_birth, etc.)
+        foreach (['first_name', 'last_name', 'date_of_birth', 'email_address', 'phone_number'] as $field) {
+            if (isset($formData[$field]) && $formData[$field] !== '') {
+                $userData[$field] = $formData[$field];
+            }
+        }
+
+        return EntityManager::updateData((int)$entity['id'], ['user_data' => $userData]);
+    }
+
     // ── KYB Private helpers ─────────────────────────────────────────────────
 
     /**
@@ -602,11 +691,24 @@ final class AipriseService
     private static function buildKybWebhookPayload(array $data, string $sessionId, string $outcome): array
     {
         $userData = $data['user_data'] ?? [];
-        $countryCode = $userData['country_code'] ?? $userData['country'] ?? 'MX';
+        $template = TemplateRegistry::getOrDefault($data['template_id'] ?? '');
+        $countryCode = $userData['country_code'] ?? $userData['country'] ?? $template['country'];
         $businessName = $userData['business_name'] ?? $userData['name'] ?? 'VIRTUAL_BUSINESS_NAME';
         $taxId = $userData['tax_id'] ?? 'VIRTUAL-TAX-001';
 
         $officerSessionId = self::generateUuid();
+
+        // Build document list from template definition (or fallback to defaults)
+        $kybDocs = $template['kyb_documents'] ?? [
+            ['file_type' => 'SHAREHOLDERS_REGISTRY',       'file_name' => 'virtual_shareholders_registry.pdf'],
+            ['file_type' => 'ADDRESS_PROOF_DOCUMENT',      'file_name' => 'virtual_proof_of_address.pdf'],
+            ['file_type' => 'ARTICLES_OF_INCORPORATION',   'file_name' => 'virtual_articles_of_incorporation.pdf'],
+        ];
+        $documents = array_map(fn(array $doc) => [
+            'file_type'   => $doc['file_type'],
+            'file_name'   => $doc['file_name'],
+            'file_s3_url' => 'https://virtual-service/docs/' . basename($doc['file_name']),
+        ], $kybDocs);
 
         return [
             'business_profile_result'  => $outcome,
@@ -631,23 +733,7 @@ final class AipriseService
                 ],
             ],
             'website'                  => $userData['website'] ?? 'https://virtual-business.example.com',
-            'documents'                => [
-                [
-                    'file_type'   => 'SHAREHOLDERS_REGISTRY',
-                    'file_name'   => 'virtual_shareholders_registry.pdf',
-                    'file_s3_url' => 'https://virtual-service/docs/shareholders_registry.pdf',
-                ],
-                [
-                    'file_type'   => 'ADDRESS_PROOF_DOCUMENT',
-                    'file_name'   => 'virtual_proof_of_address.pdf',
-                    'file_s3_url' => 'https://virtual-service/docs/proof_of_address.pdf',
-                ],
-                [
-                    'file_type'   => 'ARTICLES_OF_INCORPORATION',
-                    'file_name'   => 'virtual_articles_of_incorporation.pdf',
-                    'file_s3_url' => 'https://virtual-service/docs/articles_of_incorporation.pdf',
-                ],
-            ],
+            'documents'                => $documents,
             'related_people'           => [
                 [
                     'person_reference_id' => self::generateUuid(),
@@ -805,20 +891,53 @@ final class AipriseService
 
     /**
      * Build id_info section matching the official IDInfo schema.
-     * Generates realistic mock data based on submitted user_data.
+     * Generates realistic mock data based on submitted user_data and template config.
      */
-    private static function buildIdInfo(string $result, array $userData, string $countryCode): array
+    private static function buildIdInfo(string $result, array $userData, array $template): array
     {
         $identity = $userData['identity'] ?? [];
+        $countryCode = $identity['identity_country_code'] ?? $template['country'];
         $firstName = $userData['first_name'] ?? 'VIRTUAL_FIRST_NAME';
         $lastName = $userData['last_name'] ?? 'VIRTUAL_LAST_NAME';
+
+        // Use template-specific ID type and number fallback
+        $idType = $identity['identity_document_type'] ?? $template['id_type'] ?? 'NATIONAL_ID';
+        $idNumber = $identity['identity_number'] ?? $template['virtual_id_number'] ?? 'VIRTUAL-ID-001';
+
+        // Build address from user_data or defaults
+        $address = $userData['address'] ?? [];
+        $parsedAddress = [
+            'address_street_1' => $address['address_street_1'] ?? 'Virtual Street 123',
+            'address_city'     => $address['address_city'] ?? 'Virtual City',
+            'address_state'    => $address['address_state'] ?? 'VC',
+            'address_country'  => $countryCode,
+            'address_zip_code' => $address['address_zip_code'] ?? '00000',
+        ];
+        $fullAddress = implode(', ', array_filter([
+            $parsedAddress['address_street_1'],
+            $parsedAddress['address_city'],
+            $parsedAddress['address_state'],
+            $parsedAddress['address_zip_code'],
+            $parsedAddress['address_country'],
+        ]));
+
+        // Build field_info matching from template's field_match_types
+        $fieldInfo = [];
+        foreach ($template['field_match_types'] as $matchType) {
+            $fieldInfo['id_number']['matched'][] = $matchType;
+        }
+        if (!empty($userData['date_of_birth'])) {
+            foreach ($template['field_match_types'] as $matchType) {
+                $fieldInfo['birth_date']['matched'][] = $matchType;
+            }
+        }
 
         return [
             'result'            => $result,
             'status'            => 'COMPLETED',
             'warnings'          => [],
-            'id_type'           => $identity['identity_document_type'] ?? 'NATIONAL_ID',
-            'id_number'         => $identity['identity_number'] ?? 'VIRTUAL-ID-001',
+            'id_type'           => $idType,
+            'id_number'         => $idNumber,
             'id_expiry_date'    => '2030-12-31',
             'id_issue_date'     => '2020-01-01',
             'first_name'        => $firstName,
@@ -831,20 +950,18 @@ final class AipriseService
             'issue_country'     => $countryCode,
             'issue_country_code'=> $countryCode,
             'address'           => [
-                'full_address'    => 'VIRTUAL_ADDRESS',
-                'parsed_address'  => [
-                    'address_street_1' => $userData['address']['address_street_1'] ?? 'Virtual Street 123',
-                    'address_city'     => $userData['address']['address_city'] ?? 'Virtual City',
-                    'address_state'    => $userData['address']['address_state'] ?? 'VC',
-                    'address_country'  => $countryCode,
-                    'address_zip_code' => $userData['address']['address_zip_code'] ?? '00000',
-                ],
+                'full_address'    => $fullAddress,
+                'parsed_address'  => $parsedAddress,
             ],
             'document_details'  => [
-                'ocr_data'     => ['Document Country' => $countryCode],
+                'ocr_data'     => [
+                    'Document Country' => $countryCode,
+                    'ID Type'          => $idType,
+                ],
                 'mrz_data'     => null,
                 'barcode_data' => null,
             ],
+            'field_info'        => $fieldInfo,
             'section_id'        => self::generateUuid(),
         ];
     }
@@ -894,14 +1011,16 @@ final class AipriseService
     /**
      * Build the full webhook callback payload matching UserVerificationResponseV2.
      * This is what gets sent to penny-api-restricted's callback URL.
+     *
+     * Sections are conditionally included based on the template's enabled checks.
      */
     private static function buildWebhookPayload(array $data, string $sessionId, string $outcome): array
     {
         $userData = $data['user_data'] ?? [];
-        $identity = $userData['identity'] ?? [];
-        $countryCode = $identity['identity_country_code'] ?? 'MX';
+        $template = TemplateRegistry::getOrDefault($data['template_id'] ?? '');
+        $checks = $template['checks'];
 
-        return [
+        $payload = [
             'client_reference_id'     => $data['client_reference_id'],
             'verification_session_id' => $sessionId,
             'event_type'              => 'VERIFICATION_SESSION_COMPLETION',
@@ -913,15 +1032,27 @@ final class AipriseService
             'template_id'             => $data['template_id'] ?? null,
             'created_at'              => (int)(microtime(true) * 1000),
             'environment'             => 'SANDBOX',
-            // Include check details — penny-api extracts customer data from these
-            'id_info'                 => self::buildIdInfo($outcome, $userData, $countryCode),
-            'face_match_info'         => self::buildFaceMatchInfo($outcome),
-            'face_liveness_info'      => self::buildFaceLivenessInfo($outcome),
-            'aml_info'                => self::buildAmlInfo($outcome),
-            'user_input'              => [
-                'user_data' => $userData,
-            ],
         ];
+
+        // Conditionally include check sections based on template configuration
+        if (in_array('id_check', $checks, true)) {
+            $payload['id_info'] = self::buildIdInfo($outcome, $userData, $template);
+        }
+        if (in_array('face_match', $checks, true)) {
+            $payload['face_match_info'] = self::buildFaceMatchInfo($outcome);
+        }
+        if (in_array('liveness', $checks, true)) {
+            $payload['face_liveness_info'] = self::buildFaceLivenessInfo($outcome);
+        }
+        if (in_array('aml', $checks, true)) {
+            $payload['aml_info'] = self::buildAmlInfo($outcome);
+        }
+
+        $payload['user_input'] = [
+            'user_data' => $userData,
+        ];
+
+        return $payload;
     }
 
     /**

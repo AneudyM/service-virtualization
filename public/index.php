@@ -273,6 +273,11 @@ $router->post('/api/v1/verify/_internal/auto-complete-kyb/{sessionId}', function
     AipriseController::autoCompleteKyb($p['sessionId'], $body);
 });
 
+// Internal: update session data from verify page form (NOT part of real AiPrise API)
+$router->post('/api/v1/verify/_internal/update-session/{sessionId}', function ($p) use ($body) {
+    AipriseController::updateSession($p['sessionId'], $body);
+});
+
 // Business KYB: API-driven verification (submit flow)
 $router->post('/api/v1/verify/run_business_verification', function () use ($namespace, $body) {
     AipriseController::runBusinessVerification($body, $namespace);

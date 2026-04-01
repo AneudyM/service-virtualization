@@ -159,6 +159,8 @@ final class BridgeController
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Accept Terms of Service | Bridge</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -198,21 +200,12 @@ final class BridgeController
                 padding: 3rem;
             }
         }
-        .badge {
-            position: absolute;
-            top: -12px;
-            left: 50%;
-            transform: translateX(-50%);
-            display: inline-block;
-            background: #fff3cd;
-            color: #856404;
-            padding: 4px 12px;
-            border-radius: 4px;
-            font-size: 11px;
-            font-weight: 700;
-            letter-spacing: 0.5px;
-            border: 1px solid #ffc107;
-            white-space: nowrap;
+        .vs-badge {
+            position: fixed; top: 12px; right: 12px; z-index: 100;
+            background: rgba(255,243,205,0.95); color: #856404;
+            padding: 4px 10px; border-radius: 4px; font-size: 10px;
+            font-weight: 700; letter-spacing: 0.5px; border: 1px solid #ffc107;
+            backdrop-filter: blur(4px);
         }
         .logo-section {
             display: flex;
@@ -283,10 +276,10 @@ final class BridgeController
     </style>
 </head>
 <body>
+    <div class="vs-badge">VIRTUAL SERVICE</div>
     <main>
         <div class="container">
             <div class="card">
-                <div class="badge">VIRTUAL SERVICE</div>
                 <div class="logo-section">
                     <svg class="bridge-logo" viewBox="0 0 512 512" aria-label="Bridge" role="img">
                         <path fill="currentColor" d="M256 512c9.1 0 18-.5 26.8-1.4l-8-76c-6.2.6-12.5 1-18.8 1s-12.6-.3-18.7-1l-8.1 76c8.8.9 17.8 1.4 26.8 1.4zM166 411.4c10.8 6.3 22.3 11.4 34.4 15.4l-23.6 72.7c-17.2-5.6-33.6-13-49-21.9L166 411.4zm-55.4-50c7.4 10.2 15.8 19.5 25.1 28L84.5 446.1c-13.3-12-25.3-25.3-35.8-39.8l61.9-44.9zM80.3 293c2.6 12.5 6.5 24.5 11.6 35.8L22 359.9c-7.2-16.2-12.8-33.2-16.5-51L80.3 293zm-3.8-37.1H0c0-.6 0-1.2 0-1.8.1-12.9 1.1-25.5 3.1-37.9C15.9 133.9 68.2 64.5 139.8 27.8 174.7 10 214.2 0 256 0c42 0 81.6 10.1 116.5 28 70.5 36.2 122.1 104.1 135.9 184.8 2.4 14 3.6 28.4 3.6 43.1H435.5c0-99.1-80.4-179.4-179.5-179.4S76.5 156.8 76.5 255.9zm343.7 72.9c5-11.3 8.9-23.3 11.5-35.7l74.8 15.8c-3.7 17.8-9.3 34.8-16.5 51l-69.8-31.2zm-43.9 60.5c9.3-8.4 17.8-17.8 25.2-28l61.8 45c-10.5 14.5-22.6 27.9-35.8 39.9l-51.2-56.8zm-64.7 37.5c12.1-3.9 23.6-9.1 34.4-15.4l38.2 66.2c-15.4 8.9-31.7 16.3-48.9 21.8l-23.7-72.7z"/>
@@ -294,7 +287,7 @@ final class BridgeController
                 </div>
                 <div class="content-section">
                     <span class="description">This application uses Bridge to securely connect accounts and move funds.</span>
-                    <span class="agreement">By clicking "Accept", you agree to Bridge's <a>Terms of Service</a> and <a>Privacy Policy</a></span>
+                    <span class="agreement">By clicking "Accept", you agree to Bridge's <a href="https://www.bridge.xyz/terms" target="_blank">Terms of Service</a> and <a href="https://www.bridge.xyz/privacy" target="_blank">Privacy Policy</a></span>
                     {$acceptButton}
                 </div>
             </div>
