@@ -15,6 +15,7 @@ use App\Controller\BridgeController;
 use App\Controller\ComplianceController;
 use App\Controller\ControlPlaneController;
 use App\Controller\EmailController;
+use App\Controller\FileStoreController;
 use App\Core\Database;
 use App\Core\JsonResponse;
 use App\Core\RequestLogger;
@@ -63,6 +64,27 @@ header('Access-Control-Allow-Headers: Content-Type, X-Test-Namespace, X-API-KEY'
 if ($method === 'OPTIONS') {
     http_response_code(204);
     exit;
+}
+
+// ── Virtual S3 File Store ────────────────────────────────────────────────────
+// AWS SDK sends PUT /{bucket}/{key} for putObject. Keys can span multiple path
+// segments (e.g. profile/uuid.jpg), so we match by bucket prefix before the
+// router (which only handles single-segment params).
+// penny-api's fetchAndEncode() sends GET to the same URL to download files.
+
+$virtualBucket = $_ENV['VIRTUAL_S3_BUCKET'] ?? 'virtual-kyc-files';
+if (str_starts_with($routePath, '/' . $virtualBucket . '/')) {
+    $objectKey = substr($routePath, strlen('/' . $virtualBucket . '/'));
+    if ($objectKey !== '' && $objectKey !== false) {
+        // CORS headers already set above
+        if ($method === 'PUT') {
+            FileStoreController::upload($virtualBucket, $objectKey, $rawBody);
+        } elseif ($method === 'GET') {
+            FileStoreController::download($virtualBucket, $objectKey);
+        } elseif ($method === 'HEAD') {
+            FileStoreController::head($virtualBucket, $objectKey);
+        }
+    }
 }
 
 // ── Helper ───────────────────────────────────────────────────────────────────

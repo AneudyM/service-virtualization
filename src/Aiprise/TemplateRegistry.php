@@ -103,6 +103,22 @@ final class TemplateRegistry
             'virtual_id_number'      => '110101199001011234',
         ],
 
+        // Argentina (DNI)
+        'a1b2c3d4-5678-90ab-cdef-argentina001' => [
+            'type'                   => 'kyc',
+            'country'                => 'AR',
+            'label'                  => 'Argentina',
+            'id_number_type'         => 'NATIONAL_ID',
+            'id_number_label'        => 'DNI',
+            'id_number_placeholder'  => '12345678',
+            'id_number_pattern'      => '/^\d{7,8}$/',
+            'id_type'                => 'NATIONAL_ID',
+            'checks'                 => ['id_check', 'face_match', 'liveness', 'aml'],
+            'doc_types'              => ['NATIONAL_ID'],
+            'field_match_types'      => ['NATIONAL_ID', 'DNI'],
+            'virtual_id_number'      => '30123456',
+        ],
+
         // Bankaool (Mexico partner)
         '95594745-fcbd-44bc-a185-3f0ead3fc011' => [
             'type'                   => 'kyc',
@@ -314,6 +330,7 @@ final class TemplateRegistry
         'MX:NATIONAL_ID'   => ['label' => 'CURP',                    'description' => 'Govt.-issued National ID number'],
         'BR:NATIONAL_ID'   => ['label' => 'CPF',                     'description' => 'Govt.-issued Tax ID number'],
         'CO:NATIONAL_ID'   => ['label' => 'Cédula de Ciudadanía',    'description' => 'Govt.-issued National ID'],
+        'AR:NATIONAL_ID'   => ['label' => 'DNI',                     'description' => 'Documento Nacional de Identidad'],
         'US:DRIVER_LICENSE' => ['label' => "Driver's License",       'description' => 'State-issued Driver\'s License'],
         'US:PASSPORT'      => ['label' => 'Passport',                'description' => 'U.S. Passport Book'],
         'CN:NATIONAL_ID'   => ['label' => 'National ID',             'description' => 'Govt.-issued Resident Identity Card'],
@@ -323,6 +340,7 @@ final class TemplateRegistry
         'MX' => 'Mexico',
         'BR' => 'Brazil',
         'CO' => 'Colombia',
+        'AR' => 'Argentina',
         'US' => 'United States',
         'CN' => 'China',
     ];

@@ -122,6 +122,7 @@ final class AipriseService
     ): array {
         $ns = $namespace ?? self::DEFAULT_NAMESPACE;
         $sessionId = self::generateUuid();
+        $outcome = self::DEFAULT_OUTCOME;
 
         // Rewrite callback URLs from external hosts to Docker-internal addresses
         $callbackUrl = self::rewriteCallbackUrl($callbackUrl);
@@ -134,8 +135,8 @@ final class AipriseService
             'callback_url'            => $callbackUrl,
             'events_callback_url'     => $eventsCallbackUrl,
             'user_data'               => $userData,
-            'verification_result'     => null,
-            'auto_outcome'            => self::DEFAULT_OUTCOME,
+            'verification_result'     => $outcome,
+            'auto_outcome'            => $outcome,
             'session_type'            => 'full_verification',
         ];
 
@@ -147,7 +148,7 @@ final class AipriseService
             data: $data,
         );
 
-        // Schedule auto-completion
+        // Schedule auto-completion (fires webhook callback after delay)
         $internalUrl = $_ENV['APP_INTERNAL_URL'] ?? 'http://localhost';
         $selfUrl = "{$internalUrl}/api/v1/verify/_internal/auto-complete/{$sessionId}";
 
@@ -159,15 +160,50 @@ final class AipriseService
             payload: [
                 'verification_session_id' => $sessionId,
                 'namespace'               => $ns,
-                'outcome'                 => self::DEFAULT_OUTCOME,
+                'outcome'                 => $outcome,
             ],
             entityId: $entityId,
             delaySeconds: $autoDelay,
         );
 
-        return [
+        // Return full verification result synchronously.
+        // The real AiPrise run_user_verification returns the complete result
+        // immediately. penny-api reads aiprise_summary.verification_result,
+        // id_info.id_number, and id_info.document_details.ocr_data.cpf from
+        // this response to update the customer record.
+        $template = TemplateRegistry::getOrDefault($templateId);
+        $checks = $template['checks'];
+
+        $response = [
             'verification_session_id' => $sessionId,
+            'client_reference_id'     => $clientReferenceId,
+            'template_id'             => $templateId,
+            'status'                  => 'COMPLETED',
+            'environment'             => 'SANDBOX',
+            'created_at'              => (int)(microtime(true) * 1000),
+            'aiprise_summary'         => [
+                'verification_result' => $outcome,
+            ],
         ];
+
+        if (in_array('id_check', $checks, true)) {
+            $response['id_info'] = self::buildIdInfo($outcome, $userData, $template);
+        }
+        if (in_array('face_match', $checks, true)) {
+            $response['face_match_info'] = self::buildFaceMatchInfo($outcome);
+        }
+        if (in_array('liveness', $checks, true)) {
+            $response['face_liveness_info'] = self::buildFaceLivenessInfo($outcome);
+        }
+        if (in_array('aml', $checks, true)) {
+            $response['aml_info'] = self::buildAmlInfo($outcome);
+        }
+
+        $response['user_input'] = [
+            'user_data' => $userData,
+        ];
+
+        return $response;
     }
 
     /**
@@ -954,16 +990,32 @@ final class AipriseService
                 'parsed_address'  => $parsedAddress,
             ],
             'document_details'  => [
-                'ocr_data'     => [
-                    'Document Country' => $countryCode,
-                    'ID Type'          => $idType,
-                ],
+                'ocr_data'     => self::buildOcrData($countryCode, $idType, $idNumber, $template),
                 'mrz_data'     => null,
                 'barcode_data' => null,
             ],
             'field_info'        => $fieldInfo,
             'section_id'        => self::generateUuid(),
         ];
+    }
+
+    /**
+     * Build OCR data section with country-specific fields.
+     * Brazil includes 'cpf' which penny-api reads at id_info.document_details.ocr_data.cpf
+     */
+    private static function buildOcrData(string $countryCode, string $idType, string $idNumber, array $template): array
+    {
+        $ocrData = [
+            'Document Country' => $countryCode,
+            'ID Type'          => $idType,
+        ];
+
+        // Brazil: penny-api reads ocr_data.cpf for the CPF number
+        if ($countryCode === 'BR' || ($template['id_number_type'] ?? '') === 'TAX_ID') {
+            $ocrData['cpf'] = $idNumber;
+        }
+
+        return $ocrData;
     }
 
     /**
