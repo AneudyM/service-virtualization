@@ -1,9 +1,9 @@
 <?php
 /**
- * AlfredPay Service Virtualization Platform — Front Controller
+ * AlfredPay Service Virtualization Platform: Front Controller
  *
  * All requests are routed through this file via .htaccess rewrite.
- * Lightweight: no full Symfony kernel — just Router + Controllers + PDO.
+ * Lightweight: no full Symfony kernel: just Router + Controllers + PDO.
  */
 
 declare(strict_types=1);
@@ -11,11 +11,20 @@ declare(strict_types=1);
 require_once __DIR__ . '/../vendor/autoload.php';
 
 use App\Controller\AipriseController;
+use App\Controller\BankaoolController;
 use App\Controller\BridgeController;
+use App\Controller\CircleController;
 use App\Controller\ComplianceController;
 use App\Controller\ControlPlaneController;
 use App\Controller\EmailController;
+use App\Controller\ExchangeCopterController;
 use App\Controller\FileStoreController;
+use App\Controller\FireblocksController;
+use App\Controller\KambiaController;
+use App\Controller\SiftController;
+use App\Controller\TransferoController;
+use App\Controller\WesternUnionController;
+use App\Controller\WorldpayController;
 use App\Core\Database;
 use App\Core\JsonResponse;
 use App\Core\RequestLogger;
@@ -46,7 +55,14 @@ $routePath = parse_url($uri, PHP_URL_PATH) ?: '/';
 $body = [];
 $rawBody = file_get_contents('php://input');
 if ($rawBody) {
-    $body = json_decode($rawBody, true) ?? [];
+    $decoded = json_decode($rawBody, true);
+    if ($decoded !== null) {
+        $body = $decoded;
+    } elseif (!empty($_POST)) {
+        // Bankaool and Paymax endpoints send application/x-www-form-urlencoded;
+        // PHP auto-populates $_POST for that content type.
+        $body = $_POST;
+    }
 }
 
 // Namespace resolution: header > query param > body
@@ -395,6 +411,424 @@ $router->post('/api/stub/email/cms/reset-password', function () use ($body) {
 $router->post('/api/stub/email/cms/confirm-password', function () use ($body) {
     EmailController::confirmPassword($body);
 });
+
+// ── Virtual Western Union Modernized API ─────────────────────────────────────
+//
+// Surface mirrors the real WU API as called by western-union-backend.
+// The path prefix matches WU_BASE_URL=http://service-virtualization.
+// Token endpoint matches the default WU_TOKEN_URL=/v1/token.
+
+$router->post('/v1/token', function () {
+    WesternUnionController::token();
+});
+
+// Config (stateless)
+$router->get('/v1/pgw/config/origination-currencies', function () {
+    WesternUnionController::originationCurrencies();
+});
+$router->get('/v1/pgw/config/entitled-destinations', function () {
+    WesternUnionController::entitledDestinations();
+});
+$router->get('/v1/pgw/config/currency-info', function () {
+    WesternUnionController::currencyInfo();
+});
+$router->get('/v1/pgw/config/payout-options', function () {
+    WesternUnionController::payoutOptions();
+});
+$router->get('/v1/pgw/config/templates', function () {
+    WesternUnionController::fieldTemplate();
+});
+$router->get('/v1/pgw/config/reasonlist', function () {
+    WesternUnionController::reasonList();
+});
+$router->get('/v1/pgw/config/state-list', function () {
+    WesternUnionController::stateList();
+});
+$router->get('/v1/pgw/config/error-translations', function () {
+    WesternUnionController::errorTranslations();
+});
+
+// Orders (stateful)
+$router->get('/v1/pgw/orders/fees', function () {
+    WesternUnionController::feeSurvey();
+});
+$router->post('/v1/pgw/orders/quotes', function () use ($namespace, $body) {
+    WesternUnionController::quote($namespace, $body);
+});
+$router->post('/v1/pgw/orders', function () use ($namespace, $body) {
+    WesternUnionController::createOrder($namespace, $body);
+});
+$router->post('/v1/pgw/orders/confirm', function () use ($namespace, $body) {
+    WesternUnionController::confirmOrder($namespace, $body);
+});
+$router->post('/v1/pgw/orders/cancel', function () use ($namespace, $body) {
+    WesternUnionController::cancelOrder($namespace, $body);
+});
+$router->post('/v1/pgw/orders/inquiry', function () use ($namespace, $body) {
+    WesternUnionController::inquiryOrder($namespace, $body);
+});
+$router->post('/v1/pgw/orders/release', function () {
+    WesternUnionController::notImplementedNoOp('release');
+});
+$router->put('/v1/pgw/orders/resume', function () {
+    WesternUnionController::notImplementedNoOp('resume');
+});
+$router->put('/v1/pgw/orders/suspend', function () {
+    WesternUnionController::notImplementedNoOp('suspend');
+});
+$router->put('/v1/pgw/orders/modify', function () {
+    WesternUnionController::notImplementedNoOp('modify');
+});
+$router->post('/v1/pgw/orders/receive', function () use ($namespace, $body) {
+    WesternUnionController::receiveValidate($namespace, $body);
+});
+$router->post('/v1/pgw/orders/receive/confirm', function () use ($namespace, $body) {
+    WesternUnionController::receiveConfirm($namespace, $body);
+});
+
+// ── Virtual WU Agent Locator API ─────────────────────────────────────────────
+
+$router->get('/v1/agent/locations', function () {
+    WesternUnionController::agentLocations();
+});
+$router->post('/v1/agent/locations', function () {
+    WesternUnionController::agentLocations();
+});
+$router->get('/v1/agent/find', function () use ($body) {
+    WesternUnionController::agentFindById([]);
+});
+$router->get('/v1/agent/find/s_phone/{phone}', function ($p) {
+    WesternUnionController::agentFindByPhone($p);
+});
+
+// WU control plane
+$router->get('/control/wu/orders', function () use ($namespace) {
+    WesternUnionController::controlListOrders($namespace);
+});
+$router->post('/control/wu/orders/{mtcn}/force-state', function ($p) use ($namespace, $body) {
+    WesternUnionController::controlForceState($namespace, $p['mtcn'], $body);
+});
+
+// ── Virtual Circle CPN API (called by cpn-ofi-api) ──────────────────────────
+//
+// Surface mirrors the real Circle Cross-Chain Payments Network OFI API:
+// https://developers.circle.com/openapi/cpn-ofi.yaml
+//
+// cpn-ofi-api talks to Circle with CIRCLE_API_BASE=http://service-virtualization,
+// so these routes must match Circle's real paths and response shapes exactly.
+// Stage 1 implements quote endpoints only; payments, RFIs, refunds, and
+// support tickets are deferred to Stage 2.
+
+$router->post('/v1/cpn/quotes', function () use ($namespace, $body) {
+    CircleController::createQuote($namespace, $body);
+});
+$router->get('/v1/cpn/quotes/{quoteId}', function ($p) use ($namespace) {
+    CircleController::getQuote($namespace, $p['quoteId']);
+});
+
+// ── Virtual Mexican Payment Service (paymax account validation) ─────────────
+// penny-api calls LOCALBALANCE_MEX_URL/paymax/account/bank/{clabe} to validate
+// bank accounts when creating fiat_account records.
+
+$router->post('/auth/token', function () use ($body) {
+    if (isset($body['apiKey']) && isset($body['apiSecret'])) {
+        JsonResponse::send(['accessToken' => 'vrt_mex_' . bin2hex(random_bytes(16))]);
+    }
+    JsonResponse::error('Missing apiKey or apiSecret', 401);
+});
+
+$router->get('/paymax/account/bank/{clabe}', function ($p) {
+    $clabe = $p['clabe'];
+    $bank = \App\Bankaool\BankaoolFixtures::lookupBank($clabe);
+    // MexService.getBankNameByAccountNumber does `return response.data` after
+    // HttpAdapter's interceptor already unwraps the Axios response, so the body
+    // must contain a `data` envelope matching the real Paymax API shape.
+    JsonResponse::send([
+        'data' => [
+            'codigo_banco' => $bank['banco'] ?? 'UNKNOWN',
+            'banco'        => $bank['codigo_banco'] ?? '000',
+        ],
+    ]);
+});
+
+// ── Virtual Bankaool Banking API ─────────────────────────────────────────────
+//
+// Simulates Bankaool's banking API (OAuth2, SPEI transfers, accounts) and the
+// Paymax/SRC microservice that AlfredPay uses for Mexican payment operations.
+// Configure BANCA_URL=http://service-virtualization:8080/banks/bankaool
+// Configure URL_MICROSERVICE_MEXICO=http://service-virtualization:8080/banks/bankaool
+
+// Browser UI
+$router->get('/banks/bankaool', fn() =>
+    BankaoolController::dashboardPage($namespace)
+);
+
+// Bankaool Direct API: OAuth2
+$router->post('/banks/bankaool/oauth2/token', fn() =>
+    BankaoolController::oauthToken($body)
+);
+
+// Bankaool Direct API: Accounts
+$router->get('/banks/bankaool/v1/cuenta', fn() =>
+    BankaoolController::getAccounts($namespace)
+);
+$router->get('/banks/bankaool/v1/cuenta/{id}/medios-pago', fn($p) =>
+    BankaoolController::getPaymentMethods($p['id'], $namespace)
+);
+$router->post('/banks/bankaool/v1/consulta-banco', fn() =>
+    BankaoolController::lookupBank($body)
+);
+
+// Bankaool Direct API: Transfers
+$router->post('/banks/bankaool/v1/token-otp', fn() =>
+    BankaoolController::tokenOtp($namespace)
+);
+$router->post('/banks/bankaool/v1/transferir', fn() =>
+    BankaoolController::transfer($body, $namespace)
+);
+$router->post('/banks/bankaool/v1/aprobar-transferencia', fn() =>
+    BankaoolController::approveTransfer($body, $namespace)
+);
+$router->post('/banks/bankaool/v1/cobranza', fn() =>
+    BankaoolController::collectionDeposit($body, $namespace)
+);
+
+// Paymax / SRC Microservice API
+$router->post('/banks/bankaool/auth/token', fn() =>
+    BankaoolController::authTokenSRC($body)
+);
+$router->post('/banks/bankaool/paymax/executen-payment', fn() =>
+    BankaoolController::executePayment($body, $namespace)
+);
+$router->post('/banks/bankaool/paymax/customer-is-balance/create', fn() =>
+    BankaoolController::createCustomerAccount($body, $namespace)
+);
+$router->get('/banks/bankaool/customer/customer-is-balance/account/{customer}', fn($p) =>
+    BankaoolController::getCustomerAccount($p['customer'], $namespace)
+);
+$router->get('/banks/bankaool/customer/customer-is-balance/account-clabe/{clabe}', fn($p) =>
+    BankaoolController::getCustomerByClabe($p['clabe'], $namespace)
+);
+$router->post('/banks/bankaool/paymax/customer-is-balance/accredit-payment', fn() =>
+    BankaoolController::accreditPayment($body, $namespace)
+);
+$router->post('/banks/bankaool/paymax/customer-is-balance/debit-payment', fn() =>
+    BankaoolController::debitPayment($body, $namespace)
+);
+$router->post('/banks/bankaool/paymax/generate/deposit', fn() =>
+    BankaoolController::generateDeposit($body, $namespace)
+);
+
+// Bankaool utilities
+$router->get('/banks/bankaool/banks', fn() =>
+    BankaoolController::listBanks()
+);
+$router->post('/banks/bankaool/validate-clabe', fn() =>
+    BankaoolController::validateClabe($body)
+);
+
+// Bankaool control plane
+$router->get('/control/bankaool/transactions', fn() =>
+    BankaoolController::controlListTransactions($namespace)
+);
+$router->post('/control/bankaool/deposit', fn() =>
+    BankaoolController::controlDeposit($body, $namespace)
+);
+
+// ── Virtual Fireblocks API (https://api.fireblocks.io) ─────────────────────
+//
+// The fireblock container sets FIREBLOCKS_BASE_URL=http://service-virtualization
+// and appends paths like /v1/transactions, /v1/vault/accounts_paged, etc.
+// Auth headers (RS256 JWT + X-API-Key) are accepted but not validated.
+
+$router->post('/v1/transactions', function () use ($body, $namespace) {
+    FireblocksController::createTransaction($body, $namespace);
+});
+
+$router->get('/v1/vault/accounts_paged', function () {
+    FireblocksController::listVaultAccounts();
+});
+
+$router->get('/v1/vault/accounts/{vaultAccountId}/{assetId}/addresses_paginated', function ($p) {
+    FireblocksController::getVaultAddresses($p['vaultAccountId'], $p['assetId']);
+});
+
+// Transaction by ID must be registered BEFORE the parameterless list route
+// because the router matches top-down and /v1/transactions/{txId} would
+// otherwise never match if a bare /v1/transactions GET were registered first.
+$router->get('/v1/transactions/{txId}', function ($p) use ($namespace) {
+    FireblocksController::getTransaction($p['txId'], $namespace);
+});
+
+// Note: GET /v1/transactions (list) conflicts with the {txId} route above.
+// The router tries patterns top-down, so {txId} will match first for paths
+// like /v1/transactions/abc123. For bare /v1/transactions?query=... the
+// {txId} route would match with txId="" which we handle gracefully.
+// To avoid ambiguity, we don't register a separate GET /v1/transactions here.
+// Instead, the {txId} handler checks for empty txId and delegates to list.
+
+// Fireblocks control plane
+$router->post('/control/fireblocks/deposit', function () use ($body) {
+    FireblocksController::controlDeposit($body);
+});
+
+// ── Virtual Stellar Horizon ────────────────────────────────────────────────
+//
+// The fireblock service uses the Stellar JS SDK which POSTs to
+// {horizonUrl}/transactions to submit signed XDR envelopes.
+
+$router->post('/transactions', function () use ($body) {
+    // Accept any XDR submission and return a successful Horizon response
+    $hash = bin2hex(random_bytes(32));
+    error_log("[Stellar Horizon] Virtual transaction submitted: {$hash}");
+    JsonResponse::send([
+        'hash'        => $hash,
+        'ledger'      => random_int(50000000, 59999999),
+        'envelope_xdr' => $body['tx'] ?? '',
+        'result_xdr'  => 'AAAAAAAAAGQAAAAAAAAAAQAAAAAAAAABAAAAAAAAAAA=',
+        'result_meta_xdr' => '',
+        'successful'  => true,
+    ]);
+});
+
+// ── Virtual KYT / AML Service ──────────────────────────────────────────────
+//
+// ramps-mexico calls KYT_URL for AML screening before processing transfers.
+// This stub always approves. Accepts any path under /virtual/kyt/.
+
+$router->post('/virtual/kyt/screen', function () use ($body) {
+    error_log("[KYT] Virtual AML screen: " . json_encode($body));
+    JsonResponse::send([
+        'status'    => 'APPROVED',
+        'riskScore' => 0,
+        'alerts'    => [],
+    ]);
+});
+
+$router->get('/virtual/kyt/status', function () {
+    JsonResponse::send([
+        'service' => 'Virtual KYT/AML',
+        'status'  => 'healthy',
+    ]);
+});
+
+// ── Virtual CoinMarketCap ──────────────────────────────────────────────────
+//
+// ramps-mexico calls COIN_MARKET_CAP_URL for price data.
+
+$router->get('/virtual/coinmarketcap/v1/cryptocurrency/quotes/latest', function () {
+    JsonResponse::send([
+        'data' => [
+            'USDC' => [
+                'quote' => [
+                    'MXN' => ['price' => 19.26, 'last_updated' => date('c')],
+                    'USD' => ['price' => 1.00, 'last_updated' => date('c')],
+                ],
+            ],
+        ],
+    ]);
+});
+
+// ── Worldpay virtual ─────────────────────────────────────────────────────────
+$router->post('/worldpay/api/payments', fn() => WorldpayController::createPayment($body));
+$router->get('/worldpay/api/payments/{id}', fn($p) => WorldpayController::getPayment($p['id']));
+$router->post('/worldpay/api/payments/{id}/3dsDeviceData', fn($p) => WorldpayController::supply3dsDeviceData($p['id'], $body));
+$router->post('/worldpay/api/payments/{id}/3dsChallenges', fn($p) => WorldpayController::complete3dsChallenge($p['id'], $body));
+$router->post('/worldpay/api/payments/{id}/settlements', fn($p) => WorldpayController::settle($p['id'], $body));
+$router->post('/worldpay/api/payments/{id}/partialSettlements', fn($p) => WorldpayController::partialSettle($p['id'], $body));
+$router->post('/worldpay/api/payments/{id}/refunds', fn($p) => WorldpayController::refund($p['id'], $body));
+$router->post('/worldpay/api/payments/{id}/partialRefunds', fn($p) => WorldpayController::partialRefund($p['id'], $body));
+$router->post('/worldpay/api/payments/{id}/cancellations', fn($p) => WorldpayController::cancel($p['id'], $body));
+$router->post('/worldpay/api/payments/{id}/reversals', fn($p) => WorldpayController::reverse($p['id'], $body));
+$router->post('/worldpay/verifiedTokens/oneTime', fn() => WorldpayController::createVerifiedTokenOneTime($body));
+$router->post('/worldpay/verifiedTokens/cardOnFile', fn() => WorldpayController::createVerifiedTokenCardOnFile($body));
+
+// ── Sift virtual ─────────────────────────────────────────────────────────────
+$router->post('/sift/v205/events', fn() => SiftController::ingest($body));
+
+// ── Virtual ExchangeCopter (https://api.exchangecopter.com) ────────────────
+// Called outbound by microserivces-argentina-payex via env URL_COPTER.
+// Configure URL_COPTER=http://service-virtualization/banks/exchangecopter
+
+$router->get('/banks/exchangecopter', fn() =>
+    ExchangeCopterController::dashboardPage($namespace ?? 'default')
+);
+$router->get('/banks/exchangecopter/login', fn() =>
+    ExchangeCopterController::login($namespace ?? 'default')
+);
+$router->post('/banks/exchangecopter/creacionCVUConRegistroWallets', fn() =>
+    ExchangeCopterController::creacionCvuConRegistroWallets($namespace ?? 'default', $body)
+);
+$router->put('/banks/exchangecopter/creacionAlias', fn() =>
+    ExchangeCopterController::creacionAlias($namespace ?? 'default', $body)
+);
+$router->post('/banks/exchangecopter/devolucionCVUonPayexAlfred', fn() =>
+    ExchangeCopterController::devolucionCvuOnPayexAlfred($namespace ?? 'default', $body)
+);
+$router->get('/banks/exchangecopter/checkCBUALIAS', fn() =>
+    ExchangeCopterController::checkCbuAlias($_GET['aliasOcvu'] ?? '')
+);
+$router->post('/control/exchangecopter/scenario', fn() =>
+    ExchangeCopterController::setScenario($namespace ?? 'default', $body)
+);
+
+// ── Virtual Transfero (openbanking.bit.one) ────────────────────────────────
+// Called outbound by rampas-brasil via env TRANSF_URL.
+// TRANSF_URL=http://service-virtualization/virtual/transfero already set in local-services.json.
+
+$router->get('/virtual/transfero', fn() =>
+    TransferoController::dashboardPage($namespace ?? 'default')
+);
+$router->post('/virtual/transfero/auth/token', fn() =>
+    TransferoController::authToken()
+);
+$router->post('/virtual/transfero/transferoAuth/send-payment', fn() =>
+    TransferoController::transferoSendPayment($namespace ?? 'default', $body)
+);
+$router->get('/virtual/transfero/transferoAuth/get-payment/{id}', fn($p) =>
+    TransferoController::transferoGetPayment($namespace ?? 'default', $p['id'])
+);
+$router->post('/virtual/transfero/copterpay/payout', fn() =>
+    TransferoController::copterpayPayout($namespace ?? 'default', $body)
+);
+$router->get('/virtual/transfero/copterpay/get-status/{id}', fn($p) =>
+    TransferoController::copterpayGetStatus($namespace ?? 'default', $p['id'])
+);
+$router->post('/control/transfero/set-status/{id}', fn($p) =>
+    TransferoController::controlSetStatus($namespace ?? 'default', $p['id'], $body)
+);
+
+// ── Virtual Kambia / microservice-colombia ─────────────────────────────────
+// rampas-colombia env URL_MICROSERVICE_COLOMBIA=http://service-virtualization/virtual/kambia,
+// code appends /kambia/*, so routes land at /virtual/kambia/kambia/*.
+
+$router->get('/virtual/kambia', fn() =>
+    KambiaController::dashboardPage($namespace ?? 'default')
+);
+$router->get('/virtual/kambia/kambia/user/login', fn() =>
+    KambiaController::userLogin()
+);
+$router->get('/virtual/kambia/kambia/account/details', fn() =>
+    KambiaController::accountDetails()
+);
+$router->post('/virtual/kambia/kambia/transaction/arch', fn() =>
+    KambiaController::createTransferArch($namespace ?? 'default', $body)
+);
+$router->get('/virtual/kambia/kambia/transaction/arch/details/{id}', fn($p) =>
+    KambiaController::getTransferArchDetails($namespace ?? 'default', $p['id'])
+);
+$router->get('/virtual/kambia/kambia/list/bank', fn() =>
+    KambiaController::listBanks()
+);
+$router->get('/virtual/kambia/kambia/list/typeDocument', fn() =>
+    KambiaController::listDocumentTypes()
+);
+$router->get('/virtual/kambia/kambia/list/account', fn() =>
+    KambiaController::listAccountTypes()
+);
+$router->post('/control/kambia/webhook/{transferId}', fn($p) =>
+    KambiaController::controlFireWebhook($namespace ?? 'default', $p['transferId'], $body)
+);
 
 // ── Dispatch ─────────────────────────────────────────────────────────────────
 

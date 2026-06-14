@@ -5,18 +5,12 @@ declare(strict_types=1);
 namespace App\Bridge;
 
 /**
- * Virtual Bridge Service — handles token generation and T&C URL creation.
- *
- * Only implements the fields that penny-api actually reads from Bridge responses.
- * Source of truth: penny-api/src/modules/customer/bridge/usa.services.ts
+ * Bridge API: token generation and T&C URLs.
  */
 final class BridgeService
 {
     /**
-     * Generate a virtual access token.
-     *
-     * Real Bridge: POST /v1/auth/token
-     * penny-api reads: response.accessToken
+     * POST /v1/auth/token -> accessToken
      */
     public static function generateAccessToken(): string
     {
@@ -24,15 +18,10 @@ final class BridgeService
     }
 
     /**
-     * Build the Terms & Conditions page URL.
+     * POST /v1/bridge/terms-conditions -> data.url
      *
-     * Real Bridge: POST /v1/bridge/terms-conditions
-     * penny-api reads: response.data (returned as-is)
-     * CMS backend reads: data.url
-     * CMS backend appends: &redirect_uri={FRONT_BASE_URL}bridge-admin/{customerId}
-     *
-     * The URL must be browser-accessible (loaded in an iframe) and must already
-     * contain a '?' so the CMS backend can append '&redirect_uri=...'
+     * URL must be browser-accessible, loaded in an iframe, and must already
+     * contain a '?' so CMS backend can append '&redirect_uri=...'
      */
     public static function getTermsConditionsUrl(): string
     {

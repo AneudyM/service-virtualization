@@ -21,28 +21,20 @@ It is **not** a simple HTTP stub/mock. It is stateful: it maintains KYC/KYB sess
 
 ## 2. Domain Name
 
-### Recommendation: `virtual-services.alfredpay.io`
+Orlando (infra) provisioned per-environment hostnames on Fargate:
 
-This follows AlfredPay's established domain conventions:
+| Environment | Hostname |
+|---|---|
+| Dev | `https://virtual-services-dev.alfredpay.io/` |
+| Staging | `https://virtual-services-stg.alfredpay.io/` |
 
-| Pattern | Examples | Used For |
-|---------|----------|----------|
-| `*-dev.alfredpay.io` | `penny-api-restricted-dev.alfredpay.io`, `cms-dev.alfredpay.io` | Dev environment services |
-| `*-stg.alfredpay.io` | `cms-stg.alfredpay.io` | Staging environment services |
-| `*.alfredpay.app` | `penny-api-restricted.alfredpay.app`, `card-pay-svc.alfredpay.app` | Production/staging services |
-
-The service virtualization platform is **infrastructure**, not an environment-specific deployment of a product service. It doesn't have dev/staging/prod variants — it's a single shared instance for test environments. Using `virtual-services.alfredpay.io` (without an environment prefix) reflects this.
-
-**Alternatives if that feels wrong:**
-- `service-virt.alfredpay.io` — shorter
-- `virtual-api.alfredpay.io` — emphasizes the API replacement role
-- `test-services.alfredpay.io` — more generic
+This follows AlfredPay's established `*-dev` / `*-stg` pattern (e.g., `penny-api-restricted-dev.alfredpay.io`, `cms-stg.alfredpay.io`). The original proposal in this doc was a single shared `virtual-services.alfredpay.io` treating the platform as environment-agnostic infrastructure; the team went the per-environment route instead, which keeps dev/stg data isolated and matches how every other service is deployed. Both hostnames are managed in Route 53.
 
 ### DNS
 
-- **Zone:** `alfredpay.io` (Route 53 or wherever AlfredPay DNS is managed)
-- **Record type:** CNAME or A (alias) pointing to the ALB
-- **SSL:** ACM certificate for `virtual-services.alfredpay.io` (or use a wildcard cert if `*.alfredpay.io` already exists)
+- **Zone:** `alfredpay.io` (Route 53)
+- **Record type:** CNAME or A (alias) pointing to the ALB for each environment
+- **SSL:** ACM certificate covering `virtual-services-dev.alfredpay.io` and `virtual-services-stg.alfredpay.io` (or a wildcard `*.alfredpay.io` if already in use)
 
 ---
 
@@ -186,7 +178,7 @@ These must be set on the Fargate task definition (or pulled from Secrets Manager
 | `APP_ENV` | Yes | `production` | Environment identifier |
 | `APP_DEBUG` | Yes | `false` | **Must be `false`** — `true` exposes stack traces with file paths |
 | `APP_SECRET` | Yes | *(random 32-char string)* | Used for internal operations |
-| `APP_BASE_URL` | Yes | `https://virtual-services.alfredpay.io` | External URL of this service (used in verification URLs, T&C page URLs) |
+| `APP_BASE_URL` | Yes | `https://virtual-services-dev.alfredpay.io` (dev) / `https://virtual-services-stg.alfredpay.io` (stg) | External URL of this service, set per environment (used in verification URLs, T&C page URLs) |
 | `APP_INTERNAL_URL` | Yes | `http://localhost` | Internal self-callback URL (localhost works — Apache listens on port 80 inside the container) |
 | `AIPRISE_HMAC_KEY` | Yes | *(from Secrets Manager)* | HMAC key for signing AiPrise webhooks (must match what penny-api-restricted expects) |
 | `AIPRISE_AUTO_DELAY` | No | `10` | Seconds before auto-completing KYC sessions (default: 10) |
@@ -254,7 +246,7 @@ The task needs to be reachable by CI/CD pipeline runners. If runners are in the 
 |---------|-------|
 | Scheme | Internal (if all consumers are in VPC) or Internet-facing (if external CI runners need access) |
 | Listener | HTTPS :443, redirect HTTP :80 -> HTTPS :443 |
-| Certificate | ACM cert for `virtual-services.alfredpay.io` |
+| Certificate | ACM cert for `virtual-services-dev.alfredpay.io` / `virtual-services-stg.alfredpay.io` (one ALB per env, or a single ALB with SNI) |
 | Target group protocol | HTTP (port 80) |
 | Health check path | `/health` |
 | Health check interval | 30 seconds |
@@ -422,7 +414,8 @@ Test scenarios auto-expire after 2 hours, but their data stays in the database u
 Create an EventBridge rule that invokes a Lambda function every hour, which calls:
 
 ```
-POST https://virtual-services.alfredpay.io/control/cleanup-expired
+POST https://virtual-services-dev.alfredpay.io/control/cleanup-expired
+POST https://virtual-services-stg.alfredpay.io/control/cleanup-expired
 ```
 
 ### Option B: Scheduled ECS Task (Self-Contained)
@@ -465,12 +458,21 @@ Steps:
 
 ### 10.2 Source Repository
 
-The application lives at:
+A dedicated GitLab repo was provisioned by Orlando (infra):
+
+```
+https://gitlab.alfredpay.app/quality-assurance/virtual-services
+```
+
+The repo's GitLab display name is `holodeck`; the URL path is still `virtual-services` (renaming the path requires Owner on the `quality-assurance` group).
+
+Local working copy currently lives at:
+
 ```
 Alfred_Repos/Test_Automation_Infrastructure/service-virtualization/
 ```
 
-If this isn't in its own Git repository yet, it will need one (or a monorepo pipeline that triggers on changes to this path).
+This directory will be migrated into the GitLab repo above. Until then, code changes happen locally and get pushed to the GitLab remote when ready.
 
 ---
 
@@ -504,8 +506,8 @@ These are small changes. The infra work (ECR, Fargate, RDS, ALB, DNS) can procee
 - [ ] **ALB:** Internal (or internet-facing if needed), HTTPS listener, ACM cert
 - [ ] **Target group:** HTTP port 80, health check on `/health`
 - [ ] **Security groups:** Task, ALB, and RDS groups per section 5.2
-- [ ] **DNS:** `virtual-services.alfredpay.io` CNAME -> ALB
-- [ ] **ACM certificate:** For `virtual-services.alfredpay.io`
+- [ ] **DNS:** `virtual-services-dev.alfredpay.io` and `virtual-services-stg.alfredpay.io` CNAMEs -> ALB(s) (done by Orlando)
+- [ ] **ACM certificate:** Covering both `virtual-services-dev.alfredpay.io` and `virtual-services-stg.alfredpay.io`
 - [ ] **CloudWatch log group:** `/ecs/service-virtualization`, 14-day retention
 - [ ] **Scheduled cleanup:** EventBridge rule calling `POST /control/cleanup-expired` hourly
 - [ ] **CloudWatch alarms:** Unhealthy host, 5xx rate, CPU, DB connections
@@ -521,27 +523,27 @@ These are small changes. The infra work (ECR, Fargate, RDS, ALB, DNS) can procee
 
 ```bash
 # 1. Health check
-curl https://virtual-services.alfredpay.io/health
+curl https://virtual-services-dev.alfredpay.io/health
 # Expected: {"error":false,"data":{"status":"healthy","db":"connected"}}
 
 # 2. Seed a test scenario
-curl -X POST https://virtual-services.alfredpay.io/control/scenarios \
+curl -X POST https://virtual-services-dev.alfredpay.io/control/scenarios \
   -H "Content-Type: application/json" \
   -H "X-API-KEY: <control-plane-api-key>" \
   -d '{"namespace":"deploy-smoke-test","domain":"compliance","name":"smoke"}'
 # Expected: 200, namespace created
 
 # 3. Inspect it
-curl https://virtual-services.alfredpay.io/control/scenarios/deploy-smoke-test \
+curl https://virtual-services-dev.alfredpay.io/control/scenarios/deploy-smoke-test \
   -H "X-API-KEY: <control-plane-api-key>"
 # Expected: 200, scenario details
 
 # 4. Clean up
-curl -X DELETE https://virtual-services.alfredpay.io/control/scenarios/deploy-smoke-test \
+curl -X DELETE https://virtual-services-dev.alfredpay.io/control/scenarios/deploy-smoke-test \
   -H "X-API-KEY: <control-plane-api-key>"
 # Expected: 200, namespace reset
 
 # 5. Verify browser-facing page
-# Open in browser: https://virtual-services.alfredpay.io/bridge/tos-page?virtual=true
+# Open in browser: https://virtual-services-dev.alfredpay.io/bridge/tos-page?virtual=true
 # Expected: Bridge Terms & Conditions HTML page renders
 ```

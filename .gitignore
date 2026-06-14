@@ -5,3 +5,7 @@
 /reports/
 *.log
 .phpunit.result.cache
+/docs/api/
+/Dockerfile.local
+/docker-compose.local.yml
+/data/prod-snapshots/

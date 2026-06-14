@@ -6,6 +6,6 @@ vendor
 var
 reports
 *.log
-*.md
 demo.ps1
 demo.sh
+test-fixtures

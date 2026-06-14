@@ -9,36 +9,17 @@ use App\Core\Database;
 use App\Entity\EntityManager;
 
 /**
- * Virtual AiPrise Service — faithful drop-in replacement for the real AiPrise API.
- *
- * Mirrors AiPrise's exact API contract so penny-api can call this service
- * without any code changes. Creates KYC verification sessions, returns
- * verification URLs, auto-completes verifications after a configurable delay,
- * and sends HMAC-SHA256-signed webhook callbacks matching the real format.
- *
- * Endpoints implemented:
- *   - POST /api/v1/verify/get_user_verification_url
- *   - POST /api/v1/verify/run_user_verification
- *   - GET  /api/v1/verify/get_user_verification_result/{id}
- *   - POST /api/v1/verify/_internal/auto-complete/{id}  (self-callback)
- *
- * Default behavior: auto-approves after DEFAULT_AUTO_DELAY seconds.
- * Override via control plane: POST /control/aiprise/{id}/complete
+ * AiPrise KYC/KYB verification service.
+ * Auto-approves after DEFAULT_AUTO_DELAY seconds unless overridden via control plane.
  */
 final class AipriseService
 {
     private const ENTITY_TYPE = 'aiprise_session';
     private const DEFAULT_NAMESPACE = '__aiprise__';
-    private const DEFAULT_AUTO_DELAY = 10; // seconds before auto-completing
+    private const DEFAULT_AUTO_DELAY = 10;
     private const DEFAULT_OUTCOME = 'APPROVED';
 
-    /**
-     * Create a verification URL session.
-     * Mirrors: POST /api/v1/verify/get_user_verification_url
-     *
-     * Creates an entity, returns verification_session_id + verification_url,
-     * and schedules auto-completion callback after a delay.
-     */
+    /** POST /api/v1/verify/get_user_verification_url */
     public static function createUrlSession(
         string  $templateId,
         string  $clientReferenceId,
@@ -52,7 +33,6 @@ final class AipriseService
         $baseUrl = $_ENV['APP_BASE_URL'] ?? 'http://localhost:8080';
         $verificationUrl = "{$baseUrl}/verify?verification_session_id={$sessionId}";
 
-        // Rewrite callback URLs from external hosts to Docker-internal addresses
         $callbackUrl = self::rewriteCallbackUrl($callbackUrl);
         $eventsCallbackUrl = self::rewriteCallbackUrl($eventsCallbackUrl);
 
@@ -77,8 +57,7 @@ final class AipriseService
             data: $data,
         );
 
-        // Schedule auto-completion via internal self-callback.
-        // Uses APP_INTERNAL_URL (port 80 inside the container) not APP_BASE_URL (host port).
+        // APP_INTERNAL_URL targets port 80 inside the container, not APP_BASE_URL.
         $internalUrl = $_ENV['APP_INTERNAL_URL'] ?? 'http://localhost';
         $selfUrl = "{$internalUrl}/api/v1/verify/_internal/auto-complete/{$sessionId}";
 
@@ -96,7 +75,6 @@ final class AipriseService
             delaySeconds: $autoDelay,
         );
 
-        // Official AiPrise response schema: UserVerificationUrlResponse
         $expiryTime = (new \DateTimeImmutable())->modify('+30 days')->format('Y-m-d\TH:i:s\Z');
 
         return [
@@ -106,12 +84,7 @@ final class AipriseService
         ];
     }
 
-    /**
-     * Run full user verification with documents.
-     * Mirrors: POST /api/v1/verify/run_user_verification
-     *
-     * Same as createUrlSession but for API-driven verification (no URL needed).
-     */
+    /** POST /api/v1/verify/run_user_verification. API-driven, no URL. */
     public static function runUserVerification(
         string  $templateId,
         string  $clientReferenceId,
@@ -124,7 +97,6 @@ final class AipriseService
         $sessionId = self::generateUuid();
         $outcome = self::DEFAULT_OUTCOME;
 
-        // Rewrite callback URLs from external hosts to Docker-internal addresses
         $callbackUrl = self::rewriteCallbackUrl($callbackUrl);
         $eventsCallbackUrl = self::rewriteCallbackUrl($eventsCallbackUrl);
 
@@ -148,7 +120,6 @@ final class AipriseService
             data: $data,
         );
 
-        // Schedule auto-completion (fires webhook callback after delay)
         $internalUrl = $_ENV['APP_INTERNAL_URL'] ?? 'http://localhost';
         $selfUrl = "{$internalUrl}/api/v1/verify/_internal/auto-complete/{$sessionId}";
 
@@ -166,11 +137,8 @@ final class AipriseService
             delaySeconds: $autoDelay,
         );
 
-        // Return full verification result synchronously.
-        // The real AiPrise run_user_verification returns the complete result
-        // immediately. penny-api reads aiprise_summary.verification_result,
-        // id_info.id_number, and id_info.document_details.ocr_data.cpf from
-        // this response to update the customer record.
+        // Synchronous response. Consumed fields: aiprise_summary.verification_result,
+        // id_info.id_number, id_info.document_details.ocr_data.cpf
         $template = TemplateRegistry::getOrDefault($templateId);
         $checks = $template['checks'];
 
@@ -206,16 +174,7 @@ final class AipriseService
         return $response;
     }
 
-    /**
-     * Get verification result for a session.
-     * Mirrors: GET /api/v1/verify/get_user_verification_result/{id}
-     *
-     * Returns the full AiPrise UserVerificationResponseV2 format including:
-     * aiprise_summary, status, id_info, face_match_info, face_liveness_info,
-     * aml_info, template_id, created_at, environment, etc.
-     *
-     * @see docs/aiprise-official/response.md for the full schema
-     */
+    /** GET /api/v1/verify/get_user_verification_result/{id} */
     public static function getVerificationResult(string $sessionId, ?string $namespace = null): ?array
     {
         $entity = self::findSession($sessionId, $namespace);
@@ -228,7 +187,6 @@ final class AipriseService
         $verificationResult = $data['verification_result']
             ?? ($isCompleted ? self::DEFAULT_OUTCOME : null);
 
-        // Map entity state to AiPrise run status
         $runStatus = match ($entity['state']) {
             'created'    => 'NOT_STARTED',
             'processing' => 'RUNNING',
@@ -241,7 +199,6 @@ final class AipriseService
         $countryCode = $identity['identity_country_code'] ?? 'MX';
         $createdAtMs = strtotime($entity['created_at'] ?? 'now') * 1000;
 
-        // Build the full response matching UserVerificationResponseV2 schema
         $response = [
             'aiprise_summary' => [
                 'verification_result' => $verificationResult,
@@ -254,7 +211,6 @@ final class AipriseService
             'environment'             => 'SANDBOX',
         ];
 
-        // Include check results only when completed, filtered by template
         if ($isCompleted) {
             $template = TemplateRegistry::getOrDefault($data['template_id'] ?? '');
             $checks = $template['checks'];
@@ -273,7 +229,6 @@ final class AipriseService
             }
         }
 
-        // Include user input data
         $response['user_input'] = [
             'user_data' => $userData,
         ];
@@ -281,12 +236,7 @@ final class AipriseService
         return $response;
     }
 
-    /**
-     * Auto-complete a verification session (called by internal self-callback).
-     *
-     * Transitions the session to "completed" state and fires the HMAC-signed
-     * webhook callback to the callback_url that penny-api-restricted listens on.
-     */
+    /** Fires HMAC-signed webhook to callback_url. */
     public static function autoComplete(string $sessionId, string $outcome, ?string $namespace = null): bool
     {
         $entity = self::findSession($sessionId, $namespace);
@@ -294,14 +244,12 @@ final class AipriseService
             return false;
         }
 
-        // Don't re-complete already completed sessions
         if ($entity['state'] === 'completed') {
             return true;
         }
 
         $data = $entity['data'];
 
-        // Transition to completed state
         EntityManager::transition(
             entityId: (int)$entity['id'],
             newState: 'completed',
@@ -310,10 +258,8 @@ final class AipriseService
             dataUpdates: ['verification_result' => $outcome],
         );
 
-        // Fire webhook to callback_url with HMAC-SHA256 signature
         self::fireWebhook($entity, $sessionId, $outcome, 'callback_url');
 
-        // Also fire to events_callback_url if different from callback_url
         $callbackUrl = $data['callback_url'] ?? null;
         $eventsUrl = $data['events_callback_url'] ?? null;
         if ($eventsUrl && $eventsUrl !== $callbackUrl) {
@@ -325,7 +271,7 @@ final class AipriseService
 
     /**
      * Control plane: manually complete a session with a specific outcome.
-     * Used for testing specific scenarios (DECLINED, REVIEW, UPDATE_REQUIRED).
+     * Used for testing specific scenarios like DECLINED, REVIEW, UPDATE_REQUIRED.
      */
     public static function setOutcome(string $sessionId, string $outcome, ?string $namespace = null): bool
     {
@@ -334,7 +280,6 @@ final class AipriseService
             return false;
         }
 
-        // Cancel any pending auto-complete callbacks for this entity
         $pdo = Database::connect();
         $pdo->prepare("
             UPDATE pending_callbacks
@@ -342,13 +287,10 @@ final class AipriseService
             WHERE entity_id = :eid AND status = 'pending'
         ")->execute(['eid' => (int)$entity['id']]);
 
-        // Immediately complete with the specified outcome
         return self::autoComplete($sessionId, $outcome, $entity['namespace']);
     }
 
-    /**
-     * List all AiPrise sessions (for control plane inspection).
-     */
+    /** Control plane: list all AiPrise sessions. */
     public static function listSessions(?string $namespace = null): array
     {
         $ns = $namespace ?? self::DEFAULT_NAMESPACE;
@@ -370,19 +312,11 @@ final class AipriseService
         }, $entities);
     }
 
-    // ── KYB (Business Verification) ─────────────────────────────────────────
-
     private const KYB_ENTITY_TYPE = 'aiprise_kyb_session';
     private const KYB_NAMESPACE = '__aiprise_kyb__';
 
     /**
-     * Create a business verification URL session.
-     * Mirrors: POST /api/v1/verify/get_business_verification_url
-     *
-     * penny-api calls this with:
-     *   - template_id: from aiprise_configuration.templateKyb
-     *   - client_reference_id: business_customers.id (NOT customerId)
-     *   - callback_url: ${AIPRISE_CALLBACK_URL_BUSINESS}/api/v1/.../webhook-url-session-kyb
+     * POST /api/v1/verify/get_business_verification_url
      *
      * penny-api extracts "business_onboarding_session_id" from the returned URL.
      */
@@ -400,7 +334,6 @@ final class AipriseService
         // penny-api parses "business_onboarding_session_id" from this URL
         $verificationUrl = "{$baseUrl}/verify?business_onboarding_session_id={$sessionId}";
 
-        // Rewrite callback URLs from external hosts to Docker-internal addresses
         $callbackUrl = self::rewriteCallbackUrl($callbackUrl);
         $eventsCallbackUrl = self::rewriteCallbackUrl($eventsCallbackUrl);
 
@@ -425,7 +358,6 @@ final class AipriseService
             data: $data,
         );
 
-        // Schedule auto-completion via internal self-callback
         $internalUrl = $_ENV['APP_INTERNAL_URL'] ?? 'http://localhost';
         $selfUrl = "{$internalUrl}/api/v1/verify/_internal/auto-complete-kyb/{$sessionId}";
 
@@ -449,10 +381,7 @@ final class AipriseService
         ];
     }
 
-    /**
-     * Get KYB verification result.
-     * Mirrors: GET /api/v1/verify/get_business_verification_result/{id}
-     */
+    /** GET /api/v1/verify/get_business_verification_result/{id} */
     public static function getKybVerificationResult(string $sessionId, ?string $namespace = null): ?array
     {
         $entity = self::findKybSession($sessionId, $namespace);
@@ -486,9 +415,6 @@ final class AipriseService
         ];
     }
 
-    /**
-     * Auto-complete a KYB session (called by internal self-callback).
-     */
     public static function autoCompleteKyb(string $sessionId, string $outcome, ?string $namespace = null): bool
     {
         $entity = self::findKybSession($sessionId, $namespace);
@@ -508,7 +434,6 @@ final class AipriseService
             dataUpdates: ['verification_result' => $outcome],
         );
 
-        // Fire KYB webhook
         self::fireKybWebhook($entity, $sessionId, $outcome, 'callback_url');
 
         $callbackUrl = $entity['data']['callback_url'] ?? null;
@@ -540,9 +465,6 @@ final class AipriseService
         return self::autoCompleteKyb($sessionId, $outcome, $entity['namespace']);
     }
 
-    /**
-     * List all KYB sessions (control plane).
-     */
     public static function listKybSessions(?string $namespace = null): array
     {
         $ns = $namespace ?? self::KYB_NAMESPACE;
@@ -564,24 +486,20 @@ final class AipriseService
         }, $entities);
     }
 
-    // ── Public Session Accessors (for verify page) ────────────────────────
-
     /**
      * Look up any session (KYC or KYB) by its verification_session_id.
      * Returns the full entity row including data, or null if not found.
      *
-     * Used by the verify page to retrieve session data (template_id, user_data)
+     * Used by the verify page to retrieve session data like template_id and user_data
      * without exposing the private KYC/KYB finders.
      */
     public static function lookupSession(string $sessionId): ?array
     {
-        // Try KYC first
         $entity = self::findSession($sessionId, null);
         if ($entity !== null) {
             return $entity;
         }
 
-        // Try KYB
         return self::findKybSession($sessionId, null);
     }
 
@@ -609,7 +527,7 @@ final class AipriseService
      * Update the user_data within a session's stored data.
      * Deep-merges $formData into the existing user_data.identity subkey.
      *
-     * Used by the verify page to persist form field values (e.g., identity_number)
+     * Used by the verify page to persist form field values like identity_number
      * before triggering auto-complete, so the webhook payload includes them.
      */
     public static function updateSessionUserData(string $sessionId, array $formData): bool
@@ -622,7 +540,6 @@ final class AipriseService
         $data = $entity['data'];
         $userData = $data['user_data'] ?? [];
 
-        // Merge identity fields into user_data.identity
         if (isset($formData['identity_number'])) {
             $userData['identity'] = $userData['identity'] ?? [];
             $userData['identity']['identity_number'] = $formData['identity_number'];
@@ -632,7 +549,6 @@ final class AipriseService
             $userData['identity']['identity_number_type'] = $formData['identity_number_type'];
         }
 
-        // Merge top-level fields (first_name, last_name, date_of_birth, etc.)
         foreach (['first_name', 'last_name', 'date_of_birth', 'email_address', 'phone_number'] as $field) {
             if (isset($formData[$field]) && $formData[$field] !== '') {
                 $userData[$field] = $formData[$field];
@@ -642,11 +558,6 @@ final class AipriseService
         return EntityManager::updateData((int)$entity['id'], ['user_data' => $userData]);
     }
 
-    // ── KYB Private helpers ─────────────────────────────────────────────────
-
-    /**
-     * Find a KYB session by ID.
-     */
     private static function findKybSession(string $sessionId, ?string $namespace): ?array
     {
         if ($namespace !== null) {
@@ -661,7 +572,6 @@ final class AipriseService
             return $entity;
         }
 
-        // Global search
         $pdo = Database::connect();
         $stmt = $pdo->prepare("
             SELECT * FROM entities
@@ -709,20 +619,18 @@ final class AipriseService
     }
 
     /**
-     * Build the KYB webhook payload.
-     *
-     * penny-api's webhookUrlSessionKyb() extracts:
-     *   - business_profile_result → triggers processing (MUST be present)
-     *   - verification_session_id / verification_session_ids → lookup business_customer
-     *   - client_reference_id → fallback lookup
-     *   - name, country_code, tax_identification_number → business info
-     *   - business_info.tax_id, business_info.country_code → metadata
-     *   - addresses[0] → city, zip, state, street
-     *   - documents[].file_type → mapped to DB columns via typeDocuments
-     *   - related_people[] → firstName, lastName, email, dateOfBirth
-     *   - user_input.user_data.phone_number → headquartersPhone
-     *   - aml_info.warnings → warning processing
-     *   - aiprise_summary.verification_result → additional status
+     * penny-api webhookUrlSessionKyb() consumes, in order:
+     *   business_profile_result                            (required, triggers processing)
+     *   verification_session_id / verification_session_ids (business_customer lookup)
+     *   client_reference_id                                (fallback lookup)
+     *   name, country_code, tax_identification_number     (business info)
+     *   business_info.tax_id, business_info.country_code  (metadata)
+     *   addresses[0]                                       (city, zip, state, street)
+     *   documents[].file_type                              (mapped via typeDocuments)
+     *   related_people[]                                   (firstName, lastName, email, dob)
+     *   user_input.user_data.phone_number                  (headquartersPhone)
+     *   aml_info.warnings                                  (warning processing)
+     *   aiprise_summary.verification_result                (additional status)
      */
     private static function buildKybWebhookPayload(array $data, string $sessionId, string $outcome): array
     {
@@ -734,7 +642,6 @@ final class AipriseService
 
         $officerSessionId = self::generateUuid();
 
-        // Build document list from template definition (or fallback to defaults)
         $kybDocs = $template['kyb_documents'] ?? [
             ['file_type' => 'SHAREHOLDERS_REGISTRY',       'file_name' => 'virtual_shareholders_registry.pdf'],
             ['file_type' => 'ADDRESS_PROOF_DOCUMENT',      'file_name' => 'virtual_proof_of_address.pdf'],
@@ -800,18 +707,10 @@ final class AipriseService
         ];
     }
 
-    // ── Private helpers ─────────────────────────────────────────────────────
-
     /**
-     * Rewrite a callback URL to use Docker-internal addressing.
-     *
-     * When penny-api reads callback URLs from the aiprise_configuration DB table,
-     * they point to external hosts (e.g. https://penny-api-restricted-dev.alfredpay.io).
-     * For local Docker testing, we need to rewrite them to the internal Docker hostname
-     * (e.g. http://penny-api-restricted-local:3002).
-     *
-     * Set AIPRISE_CALLBACK_REWRITE_HOST to enable (e.g. "http://penny-api-restricted-local:3002").
-     * Only the scheme+host+port is replaced; the path is preserved.
+     * Callback URLs from the aiprise_configuration table point to external hosts
+     * that the container cannot reach. When AIPRISE_CALLBACK_REWRITE_HOST is set,
+     * the scheme+host+port are replaced and the path is preserved.
      */
     private static function rewriteCallbackUrl(?string $url): ?string
     {
@@ -829,10 +728,8 @@ final class AipriseService
             return $url;
         }
 
-        // Strip trailing slash from rewrite host
         $rewriteHost = rtrim($rewriteHost, '/');
 
-        // Reconstruct: rewrite host + original path + query
         $path = $parsed['path'] ?? '';
         $query = isset($parsed['query']) ? '?' . $parsed['query'] : '';
         $fragment = isset($parsed['fragment']) ? '#' . $parsed['fragment'] : '';
@@ -845,7 +742,6 @@ final class AipriseService
      */
     private static function findSession(string $sessionId, ?string $namespace): ?array
     {
-        // Try specific namespace first
         if ($namespace !== null) {
             $entity = EntityManager::find($namespace, self::ENTITY_TYPE, $sessionId);
             if ($entity !== null) {
@@ -853,19 +749,15 @@ final class AipriseService
             }
         }
 
-        // Try default namespace
         $entity = EntityManager::find(self::DEFAULT_NAMESPACE, self::ENTITY_TYPE, $sessionId);
         if ($entity !== null) {
             return $entity;
         }
 
-        // Global search (session IDs are UUIDs, globally unique)
+        // Session IDs are UUIDs so they are globally unique across namespaces.
         return self::findSessionGlobally($sessionId);
     }
 
-    /**
-     * Search all namespaces for a session by entity_ref.
-     */
     private static function findSessionGlobally(string $sessionId): ?array
     {
         $pdo = Database::connect();
@@ -885,7 +777,7 @@ final class AipriseService
     /**
      * Fire an HMAC-SHA256-signed webhook to a callback URL.
      *
-     * Payload matches the AiPrise UserVerificationResponseV2 schema.
+     * AiPrise UserVerificationResponseV2 payload.
      * The HMAC signature is computed the same way AiPrise does it:
      *   HMAC-SHA256(JSON.stringify(payload), AIPRISE_ID_KEY)
      *
@@ -906,9 +798,6 @@ final class AipriseService
 
         $webhookPayload = self::buildWebhookPayload($data, $sessionId, $outcome);
 
-        // Compute HMAC-SHA256 on the exact JSON that will be sent.
-        // CallbackScheduler stores json_encode($payload), and that's what gets POSTed.
-        // Node.js JSON.stringify(JSON.parse(body)) produces identical output for our payloads.
         $hmacKey = $_ENV['AIPRISE_HMAC_KEY'] ?? 'virtual-aiprise-key-for-testing';
         $payloadJson = json_encode($webhookPayload);
         $signature = strtolower(hash_hmac('sha256', $payloadJson, $hmacKey));
@@ -923,12 +812,7 @@ final class AipriseService
         );
     }
 
-    // ── Response builders (match official AiPrise schema) ──────────────────
-
-    /**
-     * Build id_info section matching the official IDInfo schema.
-     * Generates realistic mock data based on submitted user_data and template config.
-     */
+    /** Build id_info section (IDInfo schema). */
     private static function buildIdInfo(string $result, array $userData, array $template): array
     {
         $identity = $userData['identity'] ?? [];
@@ -936,11 +820,9 @@ final class AipriseService
         $firstName = $userData['first_name'] ?? 'VIRTUAL_FIRST_NAME';
         $lastName = $userData['last_name'] ?? 'VIRTUAL_LAST_NAME';
 
-        // Use template-specific ID type and number fallback
         $idType = $identity['identity_document_type'] ?? $template['id_type'] ?? 'NATIONAL_ID';
         $idNumber = $identity['identity_number'] ?? $template['virtual_id_number'] ?? 'VIRTUAL-ID-001';
 
-        // Build address from user_data or defaults
         $address = $userData['address'] ?? [];
         $parsedAddress = [
             'address_street_1' => $address['address_street_1'] ?? 'Virtual Street 123',
@@ -957,7 +839,6 @@ final class AipriseService
             $parsedAddress['address_country'],
         ]));
 
-        // Build field_info matching from template's field_match_types
         $fieldInfo = [];
         foreach ($template['field_match_types'] as $matchType) {
             $fieldInfo['id_number']['matched'][] = $matchType;
@@ -999,10 +880,7 @@ final class AipriseService
         ];
     }
 
-    /**
-     * Build OCR data section with country-specific fields.
-     * Brazil includes 'cpf' which penny-api reads at id_info.document_details.ocr_data.cpf
-     */
+    /** Consumed field for Brazil: ocr_data.cpf */
     private static function buildOcrData(string $countryCode, string $idType, string $idNumber, array $template): array
     {
         $ocrData = [
@@ -1010,7 +888,6 @@ final class AipriseService
             'ID Type'          => $idType,
         ];
 
-        // Brazil: penny-api reads ocr_data.cpf for the CPF number
         if ($countryCode === 'BR' || ($template['id_number_type'] ?? '') === 'TAX_ID') {
             $ocrData['cpf'] = $idNumber;
         }
@@ -1018,9 +895,6 @@ final class AipriseService
         return $ocrData;
     }
 
-    /**
-     * Build face_match_info section matching FaceMatchInfo schema.
-     */
     private static function buildFaceMatchInfo(string $result): array
     {
         return [
@@ -1032,9 +906,6 @@ final class AipriseService
         ];
     }
 
-    /**
-     * Build face_liveness_info section matching FaceLivenessInfo schema.
-     */
     private static function buildFaceLivenessInfo(string $result): array
     {
         return [
@@ -1045,9 +916,6 @@ final class AipriseService
         ];
     }
 
-    /**
-     * Build aml_info section matching AMLInfo schema.
-     */
     private static function buildAmlInfo(string $result): array
     {
         return [
@@ -1061,10 +929,8 @@ final class AipriseService
     }
 
     /**
-     * Build the full webhook callback payload matching UserVerificationResponseV2.
-     * This is what gets sent to penny-api-restricted's callback URL.
-     *
-     * Sections are conditionally included based on the template's enabled checks.
+     * Build UserVerificationResponseV2 webhook payload for penny-api-restricted.
+     * Sections conditionally included based on template checks.
      */
     private static function buildWebhookPayload(array $data, string $sessionId, string $outcome): array
     {
@@ -1086,7 +952,6 @@ final class AipriseService
             'environment'             => 'SANDBOX',
         ];
 
-        // Conditionally include check sections based on template configuration
         if (in_array('id_check', $checks, true)) {
             $payload['id_info'] = self::buildIdInfo($outcome, $userData, $template);
         }
@@ -1107,9 +972,6 @@ final class AipriseService
         return $payload;
     }
 
-    /**
-     * Generate a v4 UUID.
-     */
     private static function generateUuid(): string
     {
         $data = random_bytes(16);

@@ -11,21 +11,12 @@ use App\Core\JsonResponse;
 use App\Entity\EntityManager;
 
 /**
- * Control Plane — seed, reset, inspect, and fire callbacks.
- *
- * These endpoints are called by tests (not by AlfredPay services).
- * They provide the test ergonomics layer described in the architecture doc:
- *   - Seed: set up a scenario with entities in known states
- *   - Reset: tear down a namespace completely
- *   - Inspect: view entity state, history, and callback log
- *   - Fire: trigger pending callbacks immediately (no cron wait)
+ * Control Plane: seed, reset, inspect, and fire callbacks.
+ * Called by tests, not by services.
  */
 final class ControlPlaneController
 {
-    /**
-     * POST /control/scenarios
-     * Seed a new test scenario.
-     */
+    /** POST /control/scenarios */
     public static function seedScenario(array $body): never
     {
         $namespace = $body['namespace'] ?? null;
@@ -40,7 +31,6 @@ final class ControlPlaneController
 
         $pdo = Database::connect();
 
-        // Check if namespace already exists
         $existing = $pdo->prepare("SELECT id FROM scenarios WHERE namespace = :ns");
         $existing->execute(['ns' => $namespace]);
         if ($existing->fetch()) {
@@ -106,10 +96,7 @@ final class ControlPlaneController
         ], 'Scenario seeded');
     }
 
-    /**
-     * DELETE /control/scenarios/{namespace}
-     * Reset/teardown a namespace — delete all entities, callbacks, and history.
-     */
+    /** DELETE /control/scenarios/{namespace} */
     public static function resetScenario(string $namespace): never
     {
         $pdo = Database::connect();
@@ -138,10 +125,7 @@ final class ControlPlaneController
         JsonResponse::ok(['deleted' => $counts], "Namespace '{$namespace}' reset");
     }
 
-    /**
-     * GET /control/scenarios/{namespace}
-     * Inspect a namespace — view all entities, their states, and pending callbacks.
-     */
+    /** GET /control/scenarios/{namespace} */
     public static function inspectScenario(string $namespace): never
     {
         $pdo = Database::connect();
@@ -160,7 +144,6 @@ final class ControlPlaneController
         $pendingCallbacks = CallbackScheduler::getPending($namespace);
         $callbackHistory = CallbackScheduler::getHistory($namespace);
 
-        // Add state history to each entity
         foreach ($entities as &$entity) {
             $entity['state_history'] = EntityManager::getHistory((int)$entity['id']);
         }
@@ -173,10 +156,7 @@ final class ControlPlaneController
         ]);
     }
 
-    /**
-     * GET /control/scenarios
-     * List all active scenarios.
-     */
+    /** GET /control/scenarios */
     public static function listScenarios(): never
     {
         $pdo = Database::connect();
@@ -184,11 +164,7 @@ final class ControlPlaneController
         JsonResponse::ok($rows);
     }
 
-    /**
-     * POST /control/fire-callbacks
-     * Fire all pending callbacks NOW (test-driven instant delivery).
-     * Optionally filter by namespace.
-     */
+    /** POST /control/fire-callbacks. Optionally filter by namespace. */
     public static function fireCallbacks(array $body): never
     {
         $namespace = $body['namespace'] ?? null;
@@ -205,10 +181,7 @@ final class ControlPlaneController
         ], 'Callbacks fired');
     }
 
-    /**
-     * GET /control/history/{namespace}
-     * View request + callback history for a namespace.
-     */
+    /** GET /control/history/{namespace} */
     public static function getHistory(string $namespace): never
     {
         $pdo = Database::connect();
@@ -227,7 +200,7 @@ final class ControlPlaneController
 
     /**
      * POST /control/cleanup-expired
-     * Remove expired scenarios (housekeeping, can also be a cron job).
+     * Remove expired scenarios. Can also be run as a cron job.
      */
     public static function cleanupExpired(): never
     {

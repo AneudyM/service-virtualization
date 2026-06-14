@@ -8,19 +8,19 @@ use App\Core\JsonResponse;
 use App\Core\RequestLogger;
 
 /**
- * Virtual Email Service Controller — stubs for the real email/notifier service.
+ * Email service: OTP and password endpoints.
  *
  * The CMS backend sends emails through an HTTP email service. In the local stack,
- * these calls are routed to this stub which logs the email details (including OTP
- * codes) and returns 200 OK.
+ * these calls are routed here, which logs the email details (including OTP codes)
+ * and returns 200 OK.
  *
  * To retrieve OTP codes: check service-virtualization container logs:
  *   docker logs service-virtualization-local --tail 20
  *
  * Routes (base path from API_URL_EMAIL_SERVICE = /api/stub/email):
- *   POST /api/stub/email/email/verification-otp   -- OTP verification email
- *   POST /api/stub/email/cms/reset-password        -- Password recovery email
- *   POST /api/stub/email/cms/confirm-password      -- Password confirmation email
+ *   POST /api/stub/email/email/verification-otp  : OTP verification email
+ *   POST /api/stub/email/cms/reset-password       : Password recovery email
+ *   POST /api/stub/email/cms/confirm-password     : Password confirmation email
  */
 final class EmailController
 {

@@ -6,10 +6,6 @@ namespace App\Entity;
 
 use App\Core\Database;
 
-/**
- * Manages stateful entities within the virtualization platform.
- * Each entity belongs to a namespace and has a state machine.
- */
 final class EntityManager
 {
     public static function create(
@@ -34,7 +30,6 @@ final class EntityManager
 
         $entityId = (int) $pdo->lastInsertId();
 
-        // Record initial state
         self::recordTransition($entityId, '', $state, 'api_call');
 
         return $entityId;
@@ -87,10 +82,7 @@ final class EntityManager
         return $rows;
     }
 
-    /**
-     * Transition an entity to a new state.
-     * Returns true if the transition was applied, false if the entity was not found.
-     */
+    /** Returns false if the entity was not found. */
     public static function transition(
         int    $entityId,
         string $newState,
@@ -106,7 +98,6 @@ final class EntityManager
 
         $oldState = $entity['state'];
 
-        // Merge data updates
         $newData = array_merge($entity['data'] ?? [], $dataUpdates);
 
         $stmt = $pdo->prepare("UPDATE entities SET state = :state, data = :data WHERE id = :id");
@@ -149,13 +140,10 @@ final class EntityManager
         return $rows;
     }
 
-    /**
-     * Delete all entities in a namespace (used by scenario reset).
-     */
+    /** state_history cascades via FK. */
     public static function deleteByNamespace(string $namespace): int
     {
         $pdo = Database::connect();
-        // state_history cascades via FK
         $stmt = $pdo->prepare("DELETE FROM entities WHERE namespace = :ns");
         $stmt->execute(['ns' => $namespace]);
         return $stmt->rowCount();

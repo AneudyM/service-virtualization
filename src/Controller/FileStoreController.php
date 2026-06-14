@@ -7,25 +7,25 @@ namespace App\Controller;
 use App\Core\RequestLogger;
 
 /**
- * Virtual S3 File Store Controller — S3-compatible file upload/download.
+ * S3 File Store: S3-compatible file upload/download.
  *
  * The AWS SDK v2 sends PUT /{bucket}/{key} for putObject operations.
  * penny-api's fetchAndEncode() uses axios.get(url) to download files.
  *
  * Files are stored on the container filesystem at /tmp/virtual-files/{bucket}/{key}.
- * This is ephemeral storage — files survive container restarts but not rebuilds.
+ * This is ephemeral storage: files survive container restarts but not rebuilds.
  *
  * Routes (handled pre-routing in index.php via bucket prefix matching):
- *   PUT  /{bucket}/{key...}  — store file, return 200 + ETag header
- *   GET  /{bucket}/{key...}  — serve file with correct Content-Type
- *   HEAD /{bucket}/{key...}  — return file metadata (size, type, ETag)
+ *   PUT  /{bucket}/{key...} : store file, return 200 + ETag header
+ *   GET  /{bucket}/{key...} : serve file with correct Content-Type
+ *   HEAD /{bucket}/{key...} : return file metadata (size, type, ETag)
  */
 final class FileStoreController
 {
     private const STORAGE_DIR = '/tmp/virtual-files';
 
     /**
-     * Handle S3 putObject — store raw binary body to disk.
+     * Handle S3 putObject: store raw binary body to disk.
      *
      * AWS SDK expects: HTTP 200 with ETag header, empty body.
      * The SDK constructs the Location URL from endpoint + bucket + key.
@@ -73,7 +73,7 @@ final class FileStoreController
     }
 
     /**
-     * Handle file download — serve stored file with correct Content-Type.
+     * Handle file download: serve stored file with correct Content-Type.
      *
      * penny-api's fetchAndEncode() calls axios.get(url, { responseType: 'arraybuffer' })
      * and base64-encodes the response for AiPrise submission.
@@ -83,7 +83,7 @@ final class FileStoreController
         $filePath = self::STORAGE_DIR . '/' . $bucket . '/' . $key;
 
         if (!file_exists($filePath)) {
-            error_log("VIRTUAL S3: 404 — {$bucket}/{$key} not found");
+            error_log("VIRTUAL S3: 404: {$bucket}/{$key} not found");
 
             $startTime = defined('REQUEST_START_TIME') ? REQUEST_START_TIME : microtime(true);
             $durationMs = (int)((microtime(true) - $startTime) * 1000);
@@ -140,7 +140,7 @@ final class FileStoreController
     }
 
     /**
-     * Handle HEAD request — return metadata without body.
+     * Handle HEAD request: return metadata without body.
      */
     public static function head(string $bucket, string $key): never
     {

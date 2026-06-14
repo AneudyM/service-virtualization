@@ -8,26 +8,12 @@ use App\Callback\CallbackScheduler;
 use App\Entity\EntityManager;
 
 /**
- * Virtual Compliance Service — L3 Workflow Emulator.
- *
- * Replaces Aiprise SaaS for KYC/KYB verification in development and testing.
- * Implements stateful KYC sessions with async callback delivery.
- *
- * Capabilities:
- *   - Create KYC/KYB sessions (draft state)
- *   - Submit documents (transition to pending)
- *   - Auto-approve/reject based on scenario config
- *   - Generate verification URLs
- *   - Emit callbacks on state transitions
- *   - Support resubmission (info_required -> pending)
+ * Replaces AiPrise SaaS for KYC/KYB verification in development/testing.
  */
 final class ComplianceService
 {
     private const ENTITY_TYPE = 'kyc_session';
 
-    /**
-     * Create a new KYC/KYB session.
-     */
     public static function createSession(
         string $namespace,
         string $customerId,
@@ -70,9 +56,6 @@ final class ComplianceService
         ];
     }
 
-    /**
-     * Get session by reference.
-     */
     public static function getSession(string $namespace, string $sessionRef): ?array
     {
         $entity = EntityManager::find($namespace, self::ENTITY_TYPE, $sessionRef);
@@ -83,10 +66,7 @@ final class ComplianceService
         return self::formatSession($entity);
     }
 
-    /**
-     * Submit documents — transitions from DRAFT to PENDING.
-     * Optionally auto-progresses to a terminal state after a delay (simulating review).
-     */
+    /** Transitions from DRAFT to PENDING; optionally auto-progresses after a delay. */
     public static function submitDocuments(
         string $namespace,
         string $sessionRef,
@@ -101,12 +81,10 @@ final class ComplianceService
 
         $currentState = KycState::from($entity['state']);
 
-        // Can submit from DRAFT or INFO_REQUIRED
         if (!in_array($currentState, [KycState::DRAFT, KycState::INFO_REQUIRED], true)) {
             return ['error' => "Cannot submit documents in state '{$currentState->value}'"];
         }
 
-        // Transition to PENDING
         EntityManager::transition(
             entityId: (int)$entity['id'],
             newState: KycState::PENDING->value,
@@ -115,7 +93,6 @@ final class ComplianceService
             dataUpdates: ['documents' => array_merge($entity['data']['documents'] ?? [], $documents)],
         );
 
-        // Schedule callback for the PENDING transition
         $callbackUrl = $entity['data']['callback_url'] ?? null;
         if ($callbackUrl) {
             CallbackScheduler::schedule(
@@ -127,7 +104,6 @@ final class ComplianceService
             );
         }
 
-        // If auto-outcome is configured, schedule the terminal state transition
         if ($autoOutcome !== null && $callbackUrl) {
             $targetState = KycState::from($autoOutcome);
             $outcomePayload = self::buildCallbackPayload($sessionRef, $targetState->value, $entity['data']);
@@ -160,9 +136,7 @@ final class ComplianceService
         return self::formatSession($updated);
     }
 
-    /**
-     * Manually transition a session to a new state (control plane operation).
-     */
+    /** Control plane: transition a session to a new state. */
     public static function transitionSession(
         string  $namespace,
         string  $sessionRef,
@@ -198,7 +172,6 @@ final class ComplianceService
             dataUpdates: $dataUpdates,
         );
 
-        // Fire callback to the consuming service
         $callbackUrl = $entity['data']['callback_url'] ?? null;
         if ($callbackUrl) {
             $payload = self::buildCallbackPayload($sessionRef, $target->value, array_merge($entity['data'], $dataUpdates));
@@ -215,18 +188,12 @@ final class ComplianceService
         return self::formatSession($updated);
     }
 
-    /**
-     * List all KYC sessions for a namespace.
-     */
     public static function listSessions(string $namespace): array
     {
         $entities = EntityManager::findAllByNamespace($namespace, self::ENTITY_TYPE);
         return array_map([self::class, 'formatSession'], $entities);
     }
 
-    /**
-     * Get state transition history for a session.
-     */
     public static function getSessionHistory(string $namespace, string $sessionRef): ?array
     {
         $entity = EntityManager::find($namespace, self::ENTITY_TYPE, $sessionRef);

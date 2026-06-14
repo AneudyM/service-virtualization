@@ -1,6 +1,6 @@
 {
     "name": "alfredpay/service-virtualization",
-    "description": "AlfredPay Service Virtualization Platform — Stateful API simulators with callback orchestration",
+    "description": "AlfredPay Service Virtualization Platform: Stateful API simulators with callback orchestration",
     "type": "project",
     "license": "proprietary",
     "minimum-stability": "stable",
@@ -10,6 +10,7 @@
         "symfony/dotenv": "^7.0"
     },
     "require-dev": {
+        "phpdocumentor/shim": "^3.9",
         "phpunit/phpunit": "^10.5"
     },
     "autoload": {
@@ -28,6 +29,9 @@
         "fire-callbacks": "php bin/fire-callbacks.php"
     },
     "config": {
-        "sort-packages": true
+        "sort-packages": true,
+        "allow-plugins": {
+            "phpdocumentor/shim": true
+        }
     }
 }

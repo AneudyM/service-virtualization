@@ -31,7 +31,7 @@ $pdo->exec("USE `{$dbName}`");
 echo "Installing schema into '{$dbName}'...\n";
 
 $statements = [
-    // Scenario registry — seed configurations for test namespaces
+    // Scenario registry: seed configurations for test namespaces
     "CREATE TABLE IF NOT EXISTS `scenarios` (
         `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         `namespace` VARCHAR(128) NOT NULL,
@@ -73,7 +73,7 @@ $statements = [
         CONSTRAINT `fk_history_entity` FOREIGN KEY (`entity_id`) REFERENCES `entities`(`id`) ON DELETE CASCADE
     ) ENGINE=InnoDB",
 
-    // Pending callbacks — the callback orchestrator queue
+    // Pending callbacks: the callback orchestrator queue
     "CREATE TABLE IF NOT EXISTS `pending_callbacks` (
         `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         `namespace` VARCHAR(128) NOT NULL,
@@ -94,7 +94,7 @@ $statements = [
         CONSTRAINT `fk_callback_entity` FOREIGN KEY (`entity_id`) REFERENCES `entities`(`id`) ON DELETE SET NULL
     ) ENGINE=InnoDB",
 
-    // Callback history — log of all fired callbacks
+    // Callback history: log of all fired callbacks
     "CREATE TABLE IF NOT EXISTS `callback_history` (
         `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         `callback_id` INT UNSIGNED NOT NULL,
@@ -111,7 +111,7 @@ $statements = [
         INDEX `idx_callback` (`callback_id`)
     ) ENGINE=InnoDB",
 
-    // Inbound request log — every API call received
+    // Inbound request log: every API call received
     "CREATE TABLE IF NOT EXISTS `request_log` (
         `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         `namespace` VARCHAR(128) NULL,
@@ -126,10 +126,71 @@ $statements = [
         INDEX `idx_namespace` (`namespace`),
         INDEX `idx_created` (`created_at`)
     ) ENGINE=InnoDB",
+
+    // Virtual exchange rate table: currently consumed by the Circle CPN
+    // virtual provider (CircleFixtures::lookupRate). Falls back to hardcoded
+    // rates in CircleFixtures if the row is missing, so seeding is optional
+    // but recommended so scenarios can override per-test.
+    "CREATE TABLE IF NOT EXISTS `virtual_rates` (
+        `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        `source_currency` VARCHAR(16) NOT NULL,
+        `destination_currency` VARCHAR(16) NOT NULL,
+        `rate` DECIMAL(24, 8) NOT NULL,
+        `provider` VARCHAR(32) NOT NULL DEFAULT 'default' COMMENT 'circle, wu, bridge, etc.',
+        `namespace` VARCHAR(128) NULL COMMENT 'per-test override (null = global default)',
+        `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX `idx_pair` (`source_currency`, `destination_currency`),
+        INDEX `idx_provider` (`provider`),
+        INDEX `idx_namespace` (`namespace`)
+    ) ENGINE=InnoDB",
 ];
 
 foreach ($statements as $sql) {
     $pdo->exec($sql);
+}
+
+// ── Seed data: virtual_rates (idempotent) ───────────────────────────────────
+//
+// Default exchange rates consumed by the virtual Circle CPN provider. Circle
+// is the primary caller, but the table is generic and other virtual providers
+// can share it. Per-namespace overrides live on the same table with namespace
+// set: lookups should prefer a namespaced row over the default.
+//
+// Rates are approximate mid-market values as of 2026-04-10 and are good enough
+// to drive Send Money flows through penny-api's fiat-to-fiat quote math.
+
+$seedRates = [
+    // USDC -> fiat
+    ['USDC', 'USD', '0.99500000'],
+    ['USDC', 'CNY', '7.10000000'],
+    ['USDC', 'MXN', '18.00000000'],
+    ['USDC', 'BRL', '5.12000000'],
+    ['USDC', 'EUR', '0.92000000'],
+    ['USDC', 'ARS', '1025.50000000'],
+    ['USDC', 'COP', '4050.00000000'],
+    ['USDC', 'HKD', '7.82000000'],
+    // USDT -> fiat
+    ['USDT', 'USD', '0.99500000'],
+    ['USDT', 'CNY', '7.10000000'],
+    ['USDT', 'MXN', '18.00000000'],
+];
+
+$seedStmt = $pdo->prepare("
+    INSERT INTO `virtual_rates` (source_currency, destination_currency, rate, provider, namespace)
+    SELECT :src, :dst, :rate, 'default', NULL
+    WHERE NOT EXISTS (
+        SELECT 1 FROM `virtual_rates`
+        WHERE source_currency = :src2 AND destination_currency = :dst2 AND namespace IS NULL
+    )
+");
+foreach ($seedRates as [$src, $dst, $rate]) {
+    $seedStmt->execute([
+        'src'  => $src,
+        'dst'  => $dst,
+        'rate' => $rate,
+        'src2' => $src,
+        'dst2' => $dst,
+    ]);
 }
 
 echo "Schema installed successfully. Tables created:\n";
@@ -137,3 +198,5 @@ $tables = $pdo->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
 foreach ($tables as $table) {
     echo "  - {$table}\n";
 }
+$rateCount = $pdo->query("SELECT COUNT(*) FROM `virtual_rates`")->fetchColumn();
+echo "Virtual rates seeded: {$rateCount} rows\n";

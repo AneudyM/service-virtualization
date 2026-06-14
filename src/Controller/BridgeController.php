@@ -8,38 +8,25 @@ use App\Bridge\BridgeService;
 use App\Core\JsonResponse;
 
 /**
- * Virtual Bridge API Controller — stubs for the real Bridge API (api.bridge.xyz).
+ * Bridge API endpoints.
  *
- * Two layers exist:
- *   1. usa-bridge-integration (AlfredPay wrapper) — calls these endpoints
- *   2. These stubs — return minimal valid responses
- *
- * Source of truth for response shapes:
- *   Bridge API Collection.postman_collection.json
- *   Bridge docs: https://apidocs.bridge.xyz
- *
- * Routes (real Bridge API surface, called by usa-bridge-integration):
- *   POST /customers/tos_links             -- T&C URL (returns { url: "..." })
- *   POST /kyc_links                       -- KYC links (returns kyc_link, tos_link, etc.)
- *
- * Routes (AlfredPay wrapper surface, called by penny-api directly):
- *   POST /v1/auth/token                   -- Authentication (returns accessToken)
- *   POST /v1/bridge/terms-conditions      -- T&C URL (wrapped in { data: { url } })
+ * Two integration surfaces:
+ *   1. usa-bridge-integration: POST /customers/tos_links, POST /kyc_links
+ *   2. penny-api: POST /v1/auth/token, POST /v1/bridge/terms-conditions
  *
  * Browser-facing:
- *   GET  /bridge/tos-page                 -- HTML page served in iframe
+ *   GET /bridge/tos-page: HTML page served in iframe
  */
 final class BridgeController
 {
     /**
      * POST /v1/auth/token
      *
-     * penny-api sends: { apiKey, apiSecret }
-     * penny-api reads: response.accessToken
+     * Accepts { apiKey, apiSecret }, returns { accessToken }.
      */
     public static function authToken(array $body): never
     {
-        // We don't validate credentials — any request gets a token
+        // We don't validate credentials: any request gets a token
         JsonResponse::send([
             'accessToken' => BridgeService::generateAccessToken(),
         ], 200);
@@ -48,14 +35,8 @@ final class BridgeController
     /**
      * POST /v1/bridge/terms-conditions
      *
-     * penny-api sends: {} (empty body) with Authorization: Bearer header
-     * penny-api's httpAdapter strips the axios wrapper (returns response.data)
-     * penny-api then reads: response.data (the inner data field)
-     * CMS backend reads: data.url from penny-api's wrapped response
-     *
-     * The real AlfredPay Bridge wrapper returns: { data: { url: "..." } }
-     * penny-api's code checks: if (!response || !response.data) throw
-     * Then returns: response.data → { url: "..." }
+     * Returns { data: { url: "..." } }.
+     * penny-api unwraps to { url }, CMS reads data.url from that.
      */
     public static function termsConditions(array $body): never
     {
@@ -66,14 +47,10 @@ final class BridgeController
         ], 200);
     }
 
-    // ── Real Bridge API surface (called by usa-bridge-integration) ──────────
-
     /**
      * POST /customers/tos_links
      *
-     * Real Bridge API endpoint.
-     * usa-bridge-integration sends: {} with Api-Key + Idempotency-Key headers
-     * Response shape from Postman collection: { "url": "<string>" }
+     * Returns { url: "..." }. Called by usa-bridge-integration.
      */
     public static function customersTosLinks(array $body): never
     {
@@ -85,10 +62,8 @@ final class BridgeController
     /**
      * POST /kyc_links
      *
-     * Real Bridge API endpoint.
-     * usa-bridge-integration sends: { full_name, email, type } with Api-Key header
-     * Response shape from Postman collection:
-     *   { id, customer_id, full_name, email, kyc_link, kyc_status, tos_link, tos_status, created_at }
+     * Returns { id, customer_id, kyc_link, kyc_status, tos_link, ... }.
+     * Called by usa-bridge-integration.
      */
     public static function kycLinks(array $body): never
     {
@@ -110,14 +85,12 @@ final class BridgeController
         ], 200);
     }
 
-    // ── Browser-facing ───────────────────────────────────────────────────────
-
     /**
      * GET /bridge/tos-page
      *
      * Browser-facing HTML page loaded in an iframe by the CMS frontend.
      * Shows a simple T&C acceptance UI. When the user clicks Accept,
-     * redirects to the redirect_uri with a virtual signed_agreement_id.
+     * redirects to the redirect_uri with a signed_agreement_id.
      *
      * Query params (appended by CMS backend):
      *   - redirect_uri: where to redirect after acceptance
@@ -126,7 +99,7 @@ final class BridgeController
     public static function tosPage(): never
     {
         $redirectUri = $_GET['redirect_uri'] ?? '';
-        // Must be a valid UUID — penny-api validates with ParseUUIDPipe
+        // Must be a valid UUID: penny-api validates with ParseUUIDPipe
         $signedAgreementId = sprintf(
             '%s-%s-4%s-%s%s-%s',
             bin2hex(random_bytes(4)),
@@ -137,14 +110,12 @@ final class BridgeController
             bin2hex(random_bytes(6))
         );
 
-        // Build the redirect URL with signed_agreement_id
         $separator = str_contains($redirectUri, '?') ? '&' : '?';
         $redirectUrl = $redirectUri
             ? $redirectUri . $separator . 'signed_agreement_id=' . $signedAgreementId
             : '';
 
-        // Serve HTML directly — this is not a JSON API endpoint
-        // Design matches the real Bridge T&C page at compliance.sandbox.bridge.xyz
+        // Design matches compliance.sandbox.bridge.xyz
         header('Content-Type: text/html; charset=UTF-8');
         http_response_code(200);
 

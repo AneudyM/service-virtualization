@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Compliance;
 
 /**
- * KYC session states — mirrors Aiprise's state machine.
+ * KYC session states.
  *
  * State transitions:
  *   DRAFT -> PENDING -> APPROVED

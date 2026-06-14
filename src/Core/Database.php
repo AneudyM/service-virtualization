@@ -7,7 +7,7 @@ namespace App\Core;
 use PDO;
 
 /**
- * Thin PDO wrapper — singleton connection for the app lifecycle.
+ * Thin PDO wrapper: singleton connection for the app lifecycle.
  */
 final class Database
 {

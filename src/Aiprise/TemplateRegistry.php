@@ -12,16 +12,14 @@ namespace App\Aiprise;
  * and how the webhook response should be shaped.
  *
  * Template IDs come from penny-api's aiprise_configuration table / env vars.
- * The virtual service uses these definitions to:
- *   - Validate identity number formats (CPF, CURP, SSN, etc.)
- *   - Conditionally include response sections (id_info, face_match, aml, etc.)
+ * These definitions control:
+ *   - Identity number format validation: CPF, CURP, SSN, etc.
+ *   - Conditional response sections: id_info, face_match, aml, etc.
  *   - Render template-specific fields on the verify page
  *   - Generate country-appropriate extracted data in webhooks
  */
 final class TemplateRegistry
 {
-    // ── KYC Templates ────────────────────────────────────────────────────────
-
     private const TEMPLATES = [
         // Mexico / Argentina / Default
         '8f46470a-7fb3-423f-835d-b3813f92bc39' => [
@@ -151,8 +149,6 @@ final class TemplateRegistry
             'virtual_id_number'      => 'GARC850101HDFRRN01',
         ],
 
-        // ── KYB Templates ────────────────────────────────────────────────────
-
         // KYB Default
         'd0cd41c6-11ad-4d03-b446-3198d6e940c5' => [
             'type'                   => 'kyb',
@@ -198,7 +194,7 @@ final class TemplateRegistry
 
     /**
      * Default template used for unknown/missing template IDs.
-     * Enables all checks and uses generic labels — backward compatible with
+     * Enables all checks and uses generic labels: backward compatible with
      * the previous behavior where every section was always included.
      */
     private const DEFAULT_TEMPLATE = [
@@ -216,9 +212,6 @@ final class TemplateRegistry
         'virtual_id_number'      => 'VIRTUAL-ID-001',
     ];
 
-    /**
-     * Look up a template by its UUID. Returns null if not found.
-     */
     public static function get(string $templateId): ?array
     {
         if ($templateId === '' || !isset(self::TEMPLATES[$templateId])) {
@@ -255,17 +248,13 @@ final class TemplateRegistry
         return $template !== null && $template['type'] === 'kyb';
     }
 
-    /**
-     * Validate an identity number against a template's format rules.
-     *
-     * @return array{valid: bool, error: ?string}
-     */
+    /** @return array{valid: bool, error: ?string} */
     public static function validateIdentityNumber(string $templateId, string $value): array
     {
         $template = self::getOrDefault($templateId);
 
         if ($template['id_number_pattern'] === null) {
-            // No validation rule — accept anything
+            // No validation rule: accept anything
             return ['valid' => true, 'error' => null];
         }
 
@@ -296,7 +285,7 @@ final class TemplateRegistry
     }
 
     /**
-     * Get the JavaScript-compatible regex pattern (without PHP delimiters/flags).
+     * Get the JavaScript-compatible regex pattern, stripped of PHP delimiters/flags.
      * Used for the HTML5 pattern attribute on the verify page.
      */
     public static function getJsPattern(string $templateId): string
@@ -307,7 +296,7 @@ final class TemplateRegistry
             return '';
         }
 
-        // Strip PHP regex delimiters and flags: /^pattern$/i → ^pattern$
+        // Strip PHP regex delimiters and flags: /^pattern$/i -> ^pattern$
         if (preg_match('#^/(.+)/[a-z]*$#s', $pattern, $m)) {
             return $m[1];
         }
@@ -315,15 +304,10 @@ final class TemplateRegistry
         return $pattern;
     }
 
-    /**
-     * Get all registered template IDs.
-     */
     public static function listTemplateIds(): array
     {
         return array_keys(self::TEMPLATES);
     }
-
-    // ── Display Metadata ──────────────────────────────────────────────────
 
     /** Human-readable labels for document types, keyed by "COUNTRY:DOC_TYPE". */
     private const DOC_TYPE_META = [
@@ -345,11 +329,7 @@ final class TemplateRegistry
         'CN' => 'China',
     ];
 
-    /**
-     * Get display metadata (label + description) for a document type in a country.
-     *
-     * @return array{label: string, description: string}
-     */
+    /** @return array{label: string, description: string} */
     public static function getDocTypeMeta(string $country, string $docType): array
     {
         $key = strtoupper($country) . ':' . strtoupper($docType);
@@ -363,26 +343,20 @@ final class TemplateRegistry
         ];
     }
 
-    /**
-     * Get the full country name for an ISO-2 code.
-     */
     public static function getCountryName(string $countryCode): string
     {
         return self::COUNTRY_NAMES[strtoupper($countryCode)] ?? $countryCode;
     }
 
-    // ── Private Validators ──────────────────────────────────────────────────
-
     /**
      * Validate a Brazilian CPF using the standard check-digit algorithm (mod 11).
      *
      * CPF is 11 digits: 9 base digits + 2 check digits.
-     * Digit 10 = 11 - (sum(d[i] * (10-i) for i=0..8) mod 11), mapped: <2 → 0
-     * Digit 11 = 11 - (sum(d[i] * (11-i) for i=0..9) mod 11), mapped: <2 → 0
+     * Digit 10 = 11 - (sum(d[i] * (10-i) for i=0..8) mod 11), mapped: <2 -> 0
+     * Digit 11 = 11 - (sum(d[i] * (11-i) for i=0..9) mod 11), mapped: <2 -> 0
      */
     private static function validateCpf(string $cpf): bool
     {
-        // Must be 11 digits
         if (!preg_match('/^\d{11}$/', $cpf)) {
             return false;
         }

@@ -8,19 +8,12 @@ use App\Compliance\ComplianceService;
 use App\Core\JsonResponse;
 
 /**
- * Virtual Compliance API — drop-in replacement for Aiprise.
- *
- * AlfredPay services (Penny API, CMS, CPN Core, etc.) call these endpoints
- * instead of the real Aiprise API. The routes mirror Aiprise's API surface.
- *
- * Namespace is passed via X-Test-Namespace header or namespace query param.
+ * Compliance API: AiPrise-compatible endpoints.
+ * Namespace via X-Test-Namespace header or namespace query param.
  */
 final class ComplianceController
 {
-    /**
-     * POST /api/compliance/sessions
-     * Create a new KYC/KYB verification session.
-     */
+    /** POST /api/compliance/sessions */
     public static function createSession(array $body, string $namespace): never
     {
         $customerId       = $body['customer_id'] ?? null;
@@ -45,10 +38,7 @@ final class ComplianceController
         JsonResponse::send($session, 201);
     }
 
-    /**
-     * GET /api/compliance/sessions/{sessionRef}
-     * Get session status.
-     */
+    /** GET /api/compliance/sessions/{sessionRef} */
     public static function getSession(string $sessionRef, string $namespace): never
     {
         $session = ComplianceService::getSession($namespace, $sessionRef);
@@ -58,10 +48,7 @@ final class ComplianceController
         JsonResponse::ok($session);
     }
 
-    /**
-     * POST /api/compliance/sessions/{sessionRef}/submit
-     * Submit documents for verification.
-     */
+    /** POST /api/compliance/sessions/{sessionRef}/submit */
     public static function submitDocuments(string $sessionRef, array $body, string $namespace): never
     {
         $documents    = $body['documents'] ?? [];
@@ -90,10 +77,7 @@ final class ComplianceController
         JsonResponse::ok($result, 'Documents submitted');
     }
 
-    /**
-     * POST /api/compliance/sessions/{sessionRef}/transition
-     * Force a state transition (control operation — can also be used by auto-progression).
-     */
+    /** POST /api/compliance/sessions/{sessionRef}/transition (also used by auto-progression). */
     public static function transitionSession(string $sessionRef, array $body, string $namespace): never
     {
         $targetState     = $body['target_state'] ?? null;
@@ -122,10 +106,7 @@ final class ComplianceController
         JsonResponse::ok($result, 'State transitioned');
     }
 
-    /**
-     * POST /api/compliance/sessions/{sessionRef}/auto-transition
-     * Internal endpoint called by the callback orchestrator to auto-progress sessions.
-     */
+    /** POST /api/compliance/sessions/{sessionRef}/auto-transition: internal, NOT part of real AiPrise API. */
     public static function autoTransition(string $sessionRef, array $body): never
     {
         $namespace       = $body['namespace'] ?? null;
@@ -155,10 +136,7 @@ final class ComplianceController
         JsonResponse::ok($result, 'Auto-transition applied');
     }
 
-    /**
-     * GET /api/compliance/sessions/{sessionRef}/url
-     * Get the verification URL for a session.
-     */
+    /** GET /api/compliance/sessions/{sessionRef}/url */
     public static function getVerificationUrl(string $sessionRef, string $namespace): never
     {
         $session = ComplianceService::getSession($namespace, $sessionRef);
@@ -173,10 +151,7 @@ final class ComplianceController
         ]);
     }
 
-    /**
-     * GET /api/compliance/sessions/{sessionRef}/history
-     * Get state transition history for a session.
-     */
+    /** GET /api/compliance/sessions/{sessionRef}/history */
     public static function getSessionHistory(string $sessionRef, string $namespace): never
     {
         $history = ComplianceService::getSessionHistory($namespace, $sessionRef);
@@ -186,10 +161,7 @@ final class ComplianceController
         JsonResponse::ok($history);
     }
 
-    /**
-     * GET /api/compliance/sessions
-     * List all sessions in a namespace.
-     */
+    /** GET /api/compliance/sessions */
     public static function listSessions(string $namespace): never
     {
         $sessions = ComplianceService::listSessions($namespace);

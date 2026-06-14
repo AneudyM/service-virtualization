@@ -8,18 +8,11 @@ use App\Core\Database;
 use DateTimeImmutable;
 
 /**
- * Virtual Callback Orchestrator — the P0 shared platform capability.
- *
- * Schedules, manages, and fires callbacks (webhooks) to consuming services.
- * Supports: delayed delivery, retry with backoff, duplicate delivery, and per-namespace isolation.
+ * Schedules and fires webhooks to consuming services.
  */
 final class CallbackScheduler
 {
-    /**
-     * Schedule a callback to be fired at a specific time.
-     *
-     * @return int The pending_callback ID
-     */
+    /** @return int The pending_callback ID */
     public static function schedule(
         string  $namespace,
         string  $targetUrl,
@@ -53,9 +46,6 @@ final class CallbackScheduler
         return (int) $pdo->lastInsertId();
     }
 
-    /**
-     * Schedule a duplicate callback (for testing duplicate handling).
-     */
     public static function scheduleDuplicate(
         string $namespace,
         string $targetUrl,
@@ -69,9 +59,6 @@ final class CallbackScheduler
         return [$first, $second];
     }
 
-    /**
-     * Get all pending callbacks for a namespace.
-     */
     public static function getPending(string $namespace): array
     {
         $pdo = Database::connect();
@@ -80,9 +67,6 @@ final class CallbackScheduler
         return $stmt->fetchAll();
     }
 
-    /**
-     * Get callback history for a namespace.
-     */
     public static function getHistory(string $namespace): array
     {
         $pdo = Database::connect();
@@ -91,9 +75,6 @@ final class CallbackScheduler
         return $stmt->fetchAll();
     }
 
-    /**
-     * Cancel all pending callbacks for a namespace.
-     */
     public static function cancelAll(string $namespace): int
     {
         $pdo = Database::connect();
@@ -103,10 +84,7 @@ final class CallbackScheduler
     }
 
     /**
-     * Fire all due callbacks NOW (used by the /control/fire-callbacks endpoint
-     * for instant test-driven triggering without waiting for cron).
-     *
-     * @return array Summary of fired callbacks
+     * Fire all due callbacks. Used by /control/fire-callbacks for instant delivery.
      */
     public static function fireNow(?string $namespace = null): array
     {
@@ -134,10 +112,7 @@ final class CallbackScheduler
         return $results;
     }
 
-    /**
-     * Force-fire ALL pending callbacks for a namespace, ignoring fire_at time.
-     * This is the key enabler for test-driven instant callback delivery.
-     */
+    /** Fire all pending callbacks for a namespace regardless of fire_at time. */
     public static function forceFireAll(string $namespace): array
     {
         $pdo = Database::connect();
@@ -182,7 +157,6 @@ final class CallbackScheduler
             $durationMs = (int)((microtime(true) - $startTime) * 1000);
             $success = $httpCode >= 200 && $httpCode < 300;
 
-            // Log history
             $pdo->prepare("
                 INSERT INTO callback_history (callback_id, namespace, target_url, payload, response_status, response_body, duration_ms, success, error)
                 VALUES (:cid, :ns, :url, :payload, :status, :body, :dur, :success, :error)
@@ -198,7 +172,6 @@ final class CallbackScheduler
                 'error'   => $error ?: null,
             ]);
 
-            // Update status
             if ($success) {
                 $pdo->prepare("UPDATE pending_callbacks SET status = 'fired', attempt_count = :a, last_attempt_at = NOW() WHERE id = :id")
                     ->execute(['a' => $attempt, 'id' => $id]);

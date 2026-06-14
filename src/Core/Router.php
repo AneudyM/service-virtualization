@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Core;
 
 /**
- * Lightweight router — maps HTTP method + path pattern to handler callables.
+ * Lightweight router: maps HTTP method + path pattern to handler callables.
  * Supports path parameters: /api/compliance/sessions/{id}
  */
 final class Router

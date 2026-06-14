@@ -9,45 +9,11 @@ use App\Aiprise\TemplateRegistry;
 use App\Core\JsonResponse;
 
 /**
- * AiPrise-Faithful API Controller — exact route/response matching.
- *
- * These endpoints mirror the real AiPrise API surface so that penny-api,
- * penny-api-restricted, and ms-aiprise can call this virtual service
- * without any code changes.
- *
- * Routes:
- *   POST /api/v1/verify/get_user_verification_url     -- Create KYC URL session
- *   POST /api/v1/verify/run_user_verification          -- Full document verification
- *   GET  /api/v1/verify/get_user_verification_result/{id} -- Get verification result
- *   POST /api/v1/verify/_internal/auto-complete/{id}   -- Internal self-callback
- *
- * Control Plane:
- *   POST /control/aiprise/{id}/complete                -- Manually trigger outcome
- *   GET  /control/aiprise/sessions                     -- List all sessions
- *
- * Business KYB (stubs):
- *   POST /api/v1/verify/create_business_profile
- *   POST /api/v1/verify/add_business_document
- *   POST /api/v1/verify/add_business_officer
- *   POST /api/v1/verify/run_verification_for_business_officer
- *   POST /api/v1/verify/run_verification_for_business_profile_id
- *   GET  /api/v1/verify/get_business_verification_result/{id}
- *   GET  /api/v1/verify/get_business_verification_url
- *   GET  /api/v1/verify/get_business_data_from_request/{id}
- *   GET  /api/v1/verify/get_business_profile/{id}
+ * AiPrise API endpoints.
  */
 final class AipriseController
 {
-    // ── Priority 1: KYC Individual Verification ─────────────────────────────
-
-    /**
-     * POST /api/v1/verify/get_user_verification_url
-     *
-     * Creates a KYC verification URL session. Returns the same shape as real AiPrise:
-     * { "verification_session_id": "uuid", "verification_url": "https://..." }
-     *
-     * Auto-schedules webhook callback to callback_url after configurable delay.
-     */
+    /** POST /api/v1/verify/get_user_verification_url */
     public static function getUserVerificationUrl(array $body, ?string $namespace): never
     {
         $templateId        = $body['template_id'] ?? '';
@@ -77,12 +43,7 @@ final class AipriseController
         JsonResponse::send($result, 200);
     }
 
-    /**
-     * POST /api/v1/verify/run_user_verification
-     *
-     * Runs a full verification with documents submitted via API.
-     * Returns: { "verification_session_id": "uuid" }
-     */
+    /** POST /api/v1/verify/run_user_verification */
     public static function runUserVerification(array $body, ?string $namespace): never
     {
         $templateId        = $body['template_id'] ?? '';
@@ -103,18 +64,7 @@ final class AipriseController
         JsonResponse::send($result, 200);
     }
 
-    /**
-     * GET /api/v1/verify/get_user_verification_result/{verification_session_id}
-     *
-     * Returns the verification result in AiPrise format:
-     * {
-     *   "verification_session_id": "uuid",
-     *   "verification_result": "APPROVED",
-     *   "aiprise_summary": { "verification_result": "APPROVED" },
-     *   "client_reference_id": "customer-uuid",
-     *   "user_data": { ... }
-     * }
-     */
+    /** GET /api/v1/verify/get_user_verification_result/{verification_session_id} */
     public static function getUserVerificationResult(string $sessionId, ?string $namespace): never
     {
         $result = AipriseService::getVerificationResult($sessionId, $namespace);
@@ -129,17 +79,7 @@ final class AipriseController
         JsonResponse::send($result, 200);
     }
 
-    // ── Internal Self-Callback ──────────────────────────────────────────────
-
-    /**
-     * POST /api/v1/verify/_internal/auto-complete/{verification_session_id}
-     *
-     * Internal endpoint called by the callback scheduler's self-callback mechanism.
-     * Transitions the session to completed state and fires the HMAC-signed webhook
-     * to penny-api-restricted's callback URL.
-     *
-     * NOT part of the real AiPrise API -- this is the virtual service's auto-progression.
-     */
+    /** POST /api/v1/verify/_internal/auto-complete/{id}: Internal endpoint. */
     public static function autoComplete(string $sessionId, array $body): never
     {
         $outcome   = $body['outcome'] ?? 'APPROVED';
@@ -161,20 +101,9 @@ final class AipriseController
         ]);
     }
 
-    // ── Internal Session Update (verify page form submission) ──────────────
-
-    /**
-     * POST /api/v1/verify/_internal/update-session/{verification_session_id}
-     *
-     * Called by the verify page form to persist identity number and other
-     * fields into the session data before triggering auto-complete.
-     * Validates the identity number format against the template's rules.
-     *
-     * NOT part of the real AiPrise API -- this is the virtual service's form handler.
-     */
+    /** POST /api/v1/verify/_internal/update-session/{id}: Internal endpoint. */
     public static function updateSession(string $sessionId, array $body): never
     {
-        // Look up the session to get its template_id
         $entity = AipriseService::lookupSession($sessionId);
         if ($entity === null) {
             JsonResponse::send([
@@ -186,7 +115,6 @@ final class AipriseController
         $templateId = $entity['data']['template_id'] ?? '';
         $identityNumber = $body['identity_number'] ?? '';
 
-        // Validate identity number format if provided
         if ($identityNumber !== '') {
             $validation = TemplateRegistry::validateIdentityNumber($templateId, $identityNumber);
             if (!$validation['valid']) {
@@ -198,7 +126,6 @@ final class AipriseController
             }
         }
 
-        // Persist the form data into the session
         $success = AipriseService::updateSessionUserData($sessionId, $body);
 
         if (!$success) {
@@ -214,17 +141,7 @@ final class AipriseController
         ]);
     }
 
-    // ── Control Plane ───────────────────────────────────────────────────────
-
-    /**
-     * POST /control/aiprise/{verification_session_id}/complete
-     *
-     * Manually trigger a verification outcome. Useful for testing specific scenarios:
-     *   { "outcome": "DECLINED" }     -- Test KYC failure
-     *   { "outcome": "REVIEW" }       -- Test manual review
-     *   { "outcome": "UPDATE_REQUIRED" } -- Test resubmission
-     *   { "outcome": "APPROVED" }     -- Test approval (default)
-     */
+    /** POST /control/aiprise/{id}/complete */
     public static function controlComplete(string $sessionId, array $body): never
     {
         $outcome = $body['outcome'] ?? 'APPROVED';
@@ -246,27 +163,16 @@ final class AipriseController
         ]);
     }
 
-    /**
-     * GET /control/aiprise/sessions
-     *
-     * List all AiPrise virtual sessions for inspection.
-     */
+    /** GET /control/aiprise/sessions */
     public static function listSessions(?string $namespace): never
     {
         $sessions = AipriseService::listSessions($namespace);
         JsonResponse::ok($sessions);
     }
 
-    // ── KYB Business Verification (Real Implementation) ─────────────────────
-
     /**
      * POST /api/v1/verify/get_business_verification_url
-     *
-     * Creates a business KYB verification URL session. penny-api calls this with:
-     *   template_id, client_reference_id (business_customers.id), callback_url
-     *
      * penny-api parses "business_onboarding_session_id" from the returned URL.
-     * Auto-schedules webhook callback after AIPRISE_AUTO_DELAY seconds.
      */
     public static function getBusinessVerificationUrl(array $body, ?string $namespace): never
     {
@@ -289,11 +195,7 @@ final class AipriseController
         JsonResponse::send($result, 200);
     }
 
-    /**
-     * GET /api/v1/verify/get_business_verification_result/{verification_session_id}
-     *
-     * Returns the KYB verification result including business_profile_result.
-     */
+    /** GET /api/v1/verify/get_business_verification_result/{id} */
     public static function getBusinessVerificationResult(string $sessionId, ?string $namespace): never
     {
         $result = AipriseService::getKybVerificationResult($sessionId, $namespace);
@@ -308,11 +210,7 @@ final class AipriseController
         JsonResponse::send($result, 200);
     }
 
-    /**
-     * POST /api/v1/verify/_internal/auto-complete-kyb/{sessionId}
-     *
-     * Internal self-callback for KYB auto-completion.
-     */
+    /** POST /api/v1/verify/_internal/auto-complete-kyb/{id}: Internal endpoint. */
     public static function autoCompleteKyb(string $sessionId, array $body): never
     {
         $outcome   = $body['outcome'] ?? 'APPROVED';
@@ -334,13 +232,7 @@ final class AipriseController
         ]);
     }
 
-    // ── KYB Control Plane ─────────────────────────────────────────────────
-
-    /**
-     * POST /control/aiprise-kyb/{sessionId}/complete
-     *
-     * Manually complete a KYB session with a specific outcome.
-     */
+    /** POST /control/aiprise-kyb/{id}/complete */
     public static function controlCompleteKyb(string $sessionId, array $body): never
     {
         $outcome = $body['outcome'] ?? 'APPROVED';
@@ -362,28 +254,14 @@ final class AipriseController
         ]);
     }
 
-    /**
-     * GET /control/aiprise-kyb/sessions
-     *
-     * List all KYB virtual sessions for inspection.
-     */
+    /** GET /control/aiprise-kyb/sessions */
     public static function listKybSessions(?string $namespace): never
     {
         $sessions = AipriseService::listKybSessions($namespace);
         JsonResponse::ok($sessions);
     }
 
-    // ── Business KYB: API-driven verification (submit flow) ─────────────────
-
-    /**
-     * POST /api/v1/verify/run_business_verification
-     *
-     * API-driven KYB verification. penny-api calls this during submitKyb()
-     * after all files have been uploaded. Sends business_data + documents as base64.
-     *
-     * Returns: { verification_session_id, template_id, client_reference_id }
-     * Then auto-completes and fires the KYB webhook.
-     */
+    /** POST /api/v1/verify/run_business_verification */
     public static function runBusinessVerification(array $body, ?string $namespace): never
     {
         $templateId        = $body['template_id'] ?? '';
@@ -392,7 +270,7 @@ final class AipriseController
         $eventsCallbackUrl = $body['events_callback_url'] ?? $callbackUrl;
         $userData          = $body['user_data'] ?? [];
 
-        // Reuse the KYB session creation logic — same auto-completion + webhook flow
+        // Reuse the KYB session creation logic: same auto-completion + webhook flow
         $result = AipriseService::createKybSession(
             templateId: $templateId,
             clientReferenceId: $clientRefId,
@@ -409,8 +287,6 @@ final class AipriseController
             'client_reference_id'     => $clientRefId,
         ], 200);
     }
-
-    // ── Business KYB API Stubs (lower priority) ──────────────────────────────
 
     /**
      * POST /api/v1/verify/create_business_profile
@@ -494,23 +370,7 @@ final class AipriseController
         ], 200);
     }
 
-    // ── Browser-Facing Verification Page ─────────────────────────────────────
-
-    /**
-     * GET /verify
-     *
-     * Browser-facing verification page loaded by the CMS frontend after Bridge
-     * T&C acceptance. Supports both KYC and KYB session types via query params:
-     *   ?verification_session_id=...         (KYC individual)
-     *   ?business_onboarding_session_id=...  (KYB business)
-     *
-     * Looks up the session from the DB to determine the template, then renders
-     * template-specific form fields (identity number, document placeholders).
-     * When the user clicks "Complete Verification", the page:
-     *   1. Validates the form fields (client-side + server-side)
-     *   2. Persists form data into the session via _internal/update-session
-     *   3. Triggers auto-complete to fire the webhook to penny-api-restricted
-     */
+    /** GET /verify: browser-facing KYC/KYB verification page. */
     public static function verifyPage(): never
     {
         $sessionId = $_GET['verification_session_id']
@@ -524,7 +384,6 @@ final class AipriseController
         $updateSessionEndpoint = "/api/v1/verify/_internal/update-session/{$sessionId}";
         $baseUrl = $_ENV['APP_BASE_URL'] ?? 'http://localhost:8080';
 
-        // Look up session to get template and pre-populated data
         $entity = AipriseService::lookupSession($sessionId);
         $sessionData = $entity['data'] ?? [];
         $templateId = $sessionData['template_id'] ?? '';
@@ -576,11 +435,10 @@ final class AipriseController
 CARD;
         }
 
-        // Build KYB summary if business template
         $kybSummaryHtml = '';
         if ($isKyb) {
-            $bizName = htmlspecialchars($userData['business_name'] ?? $userData['name'] ?? '—', ENT_QUOTES);
-            $bizTaxId = htmlspecialchars($userData['tax_id'] ?? '—', ENT_QUOTES);
+            $bizName = htmlspecialchars($userData['business_name'] ?? $userData['name'] ?? '-', ENT_QUOTES);
+            $bizTaxId = htmlspecialchars($userData['tax_id'] ?? '-', ENT_QUOTES);
             $bizCountry = htmlspecialchars($userData['country_code'] ?? $userData['country'] ?? $country, ENT_QUOTES);
             $kybSummaryHtml = <<<KYBHTML
                         <div class="kyb-summary">
@@ -591,7 +449,6 @@ CARD;
 KYBHTML;
         }
 
-        // Build form fields HTML (KYC Step 2)
         $formFieldsHtml = '';
         if (!$isKyb && $template['id_number_label'] !== null) {
             $patternAttr = $jsPattern !== '' ? "pattern=\"{$jsPattern}\"" : '';
