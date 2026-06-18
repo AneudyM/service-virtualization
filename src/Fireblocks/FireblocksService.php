@@ -344,7 +344,7 @@ final class FireblocksService
         ];
 
         // Fire the webhook to rampas-penny-api
-        $targetUrl = 'http://rampas-penny-api:3007/v1/webhook/alfredPay/fireblocks';
+        $targetUrl = $_ENV['FIREBLOCKS_WEBHOOK_URL'] ?? 'http://rampas-penny-api:3007/v1/webhook/alfredPay/fireblocks';
 
         $ch = curl_init($targetUrl);
         curl_setopt_array($ch, [

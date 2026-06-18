@@ -39,7 +39,11 @@ final class KambiaService
     public const STATUS_PENDING = 'PENDING';
     public const STATUS_FAILED = 'FAILED';
 
-    private const RAMPAS_COLOMBIA_WEBHOOK_URL = 'http://rampas-colombia-local:3010/v1/webhook/webhookKambia';
+    /** Overridable per environment: dev/stg point at the deployed rampas-colombia. */
+    private static function webhookUrl(): string
+    {
+        return $_ENV['KAMBIA_WEBHOOK_URL'] ?? 'http://rampas-colombia-local:3010/v1/webhook/webhookKambia';
+    }
 
     public static function userLogin(): array
     {
@@ -194,7 +198,7 @@ final class KambiaService
             'external_reference'      => $data['external_reference'] ?? null,
         ];
 
-        $ch = curl_init(self::RAMPAS_COLOMBIA_WEBHOOK_URL);
+        $ch = curl_init(self::webhookUrl());
         curl_setopt_array($ch, [
             CURLOPT_POST           => true,
             CURLOPT_POSTFIELDS     => json_encode($webhookBody),

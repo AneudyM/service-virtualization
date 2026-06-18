@@ -293,11 +293,18 @@ final class AipriseController
      */
     public static function createBusinessProfile(array $body): never
     {
-        $profileId = self::generateUuid();
+        $clientRefId = $body['client_reference_id'] ?? self::generateUuid();
+        $callbackUrl = $body['callback_url'] ?? '';
+
+        $result = AipriseService::createBusinessProfile(
+            clientReferenceId: $clientRefId,
+            callbackUrl: $callbackUrl,
+        );
+
         JsonResponse::send([
-            'business_profile_id'   => $profileId,
-            'status'                => 'CREATED',
-            'client_reference_id'   => $body['client_reference_id'] ?? null,
+            'business_profile_id' => $result['business_profile_id'],
+            'status'              => 'CREATED',
+            'client_reference_id' => $clientRefId,
         ], 200);
     }
 
@@ -340,8 +347,29 @@ final class AipriseController
      */
     public static function runVerificationForBusinessProfileId(array $body): never
     {
+        $profileId   = $body['business_profile_id'] ?? '';
+        $templateId  = $body['template_id'] ?? 'local-mock-kyb-template';
+        $clientRefId = $body['client_reference_id'] ?? self::generateUuid();
+
+        // Retrieve the stored profile to get the callback URL from create_business_profile.
+        $profile     = AipriseService::findBusinessProfile($profileId);
+        $callbackUrl = $profile !== null ? ($profile['data']['callback_url'] ?? '') : '';
+
+        // Fall back to the configured env var when the profile carried no callback URL.
+        if ($callbackUrl === '') {
+            $callbackUrl = $_ENV['AIPRISE_KYB_CALLBACK_URL'] ?? '';
+        }
+
+        $result = AipriseService::createKybSession(
+            templateId: $templateId,
+            clientReferenceId: $clientRefId,
+            callbackUrl: $callbackUrl,
+            eventsCallbackUrl: null,
+            userData: $body['user_data'] ?? [],
+        );
+
         JsonResponse::send([
-            'verification_session_id' => self::generateUuid(),
+            'verification_session_id' => $result['verification_session_id'],
             'status'                  => 'PROCESSING',
         ], 200);
     }

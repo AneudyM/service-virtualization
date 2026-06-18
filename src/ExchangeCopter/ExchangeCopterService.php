@@ -196,6 +196,93 @@ final class ExchangeCopterService
         ];
     }
 
+    /**
+     * GET /UAT/balance?idCvu=…: virtual ARS balance for a CVU.
+     * microserivces-argentina-payex calls this with the /UAT/ prefix via URL_COPTER.
+     */
+    public static function balance(string $namespace, string $idCvu): array
+    {
+        if ($idCvu === '') {
+            return [
+                'status' => 400,
+                'body'   => ['error' => 'idCvu required'],
+            ];
+        }
+
+        return [
+            'status' => 200,
+            'body'   => [
+                'idCvu'    => $idCvu,
+                'balance'  => 100000.00,
+                'currency' => 'ARS',
+            ],
+        ];
+    }
+
+    /**
+     * POST /createTransactionTotalPay: virtual COELSA withdrawal.
+     * Body: { amount, origin (CVU), destination (CVU) }.
+     * The TS caller reads response.data.respuesta2.Data.details.codigo for the COELSA ID.
+     * Reached via COPTER_TOTALPAY_URL (patched from hardcoded api.exchangecopter.com).
+     */
+    public static function createTransactionTotalPay(string $namespace, array $body): array
+    {
+        $coelsaId = 'COELSA-' . bin2hex(random_bytes(8));
+
+        EntityManager::create($namespace, 'exchangecopter_totalpay', $coelsaId, 'PENDING', [
+            'coelsaId'    => $coelsaId,
+            'amount'      => $body['amount'] ?? 0,
+            'origin'      => $body['origin'] ?? '',
+            'destination' => $body['destination'] ?? '',
+        ]);
+
+        return [
+            'status' => 200,
+            'body'   => [
+                'respuesta2' => [
+                    'Data' => [
+                        'details' => [
+                            'codigo' => $coelsaId,
+                        ],
+                        'status' => 'PENDING',
+                        'amount' => $body['amount'] ?? 0,
+                    ],
+                ],
+            ],
+        ];
+    }
+
+    /**
+     * GET /consultaCoelsaIdTotalPay?CoelsaId=…: virtual COELSA transaction status.
+     * The TS caller reads data.data.Data from the response.
+     * Reached via COPTER_TOTALPAY_URL (patched from hardcoded api.exchangecopter.com).
+     */
+    public static function consultaCoelsaIdTotalPay(string $namespace, string $coelsaId): array
+    {
+        if ($coelsaId === '') {
+            return [
+                'status' => 400,
+                'body'   => ['error' => 'CoelsaId required'],
+            ];
+        }
+
+        $e = EntityManager::find($namespace, 'exchangecopter_totalpay', $coelsaId);
+        $data = $e ? $e['data'] : [];
+
+        return [
+            'status' => 200,
+            'body'   => [
+                'Data' => [
+                    'idCoelsa'    => $coelsaId,
+                    'status'      => 'SETTLED',
+                    'amount'      => $data['amount'] ?? null,
+                    'origin'      => $data['origin'] ?? null,
+                    'destination' => $data['destination'] ?? null,
+                ],
+            ],
+        ];
+    }
+
     /** GET /checkCBUALIAS?aliasOcvu=…: reverse lookup. */
     public static function checkCbuAlias(string $aliasOrCvu): array
     {

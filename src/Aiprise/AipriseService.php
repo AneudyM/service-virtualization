@@ -315,6 +315,9 @@ final class AipriseService
     private const KYB_ENTITY_TYPE = 'aiprise_kyb_session';
     private const KYB_NAMESPACE = '__aiprise_kyb__';
 
+    private const BUSINESS_PROFILE_ENTITY_TYPE = 'aiprise_business_profile';
+    private const BUSINESS_PROFILE_NAMESPACE   = '__aiprise_kyb_profile__';
+
     /**
      * POST /api/v1/verify/get_business_verification_url
      *
@@ -970,6 +973,38 @@ final class AipriseService
         ];
 
         return $payload;
+    }
+
+    /** POST /api/v1/verify/create_business_profile — stores profile with callback URL. */
+    public static function createBusinessProfile(
+        string $clientReferenceId,
+        string $callbackUrl,
+    ): array {
+        $profileId = self::generateUuid();
+
+        EntityManager::create(
+            namespace: self::BUSINESS_PROFILE_NAMESPACE,
+            entityType: self::BUSINESS_PROFILE_ENTITY_TYPE,
+            entityRef: $profileId,
+            state: 'created',
+            data: [
+                'business_profile_id' => $profileId,
+                'client_reference_id' => $clientReferenceId,
+                'callback_url'        => $callbackUrl,
+            ],
+        );
+
+        return ['business_profile_id' => $profileId];
+    }
+
+    /** Look up a stored business profile by ID. */
+    public static function findBusinessProfile(string $profileId): ?array
+    {
+        return EntityManager::find(
+            self::BUSINESS_PROFILE_NAMESPACE,
+            self::BUSINESS_PROFILE_ENTITY_TYPE,
+            $profileId,
+        );
     }
 
     private static function generateUuid(): string

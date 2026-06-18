@@ -48,6 +48,24 @@ CREATE TABLE IF NOT EXISTS temp_log_circle (
 ALTER TABLE temp_log_circle ALTER COLUMN description TYPE TEXT;
 ALTER TABLE temp_log_circle ALTER COLUMN method TYPE TEXT;
 
+-- main_account table (XTransfer v2 Local Balance -- not auto-created by TypeORM sync)
+CREATE TABLE IF NOT EXISTS main_account (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  customer_id UUID NOT NULL,
+  currency VARCHAR(3) NOT NULL,
+  status VARCHAR(24) NOT NULL DEFAULT 'ACTIVE',
+  display_name VARCHAR NOT NULL DEFAULT '',
+  account_holder_name VARCHAR NOT NULL DEFAULT '',
+  external_reference VARCHAR NOT NULL,
+  capabilities_requested JSONB,
+  metadata JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS "IDX_MAIN_ACCOUNT_CUSTOMER_CURRENCY" ON main_account (customer_id, currency);
+CREATE UNIQUE INDEX IF NOT EXISTS "IDX_MAIN_ACCOUNT_EXTERNAL_REFERENCE" ON main_account (external_reference);
+DO $$ BEGIN ALTER TABLE main_account DROP CONSTRAINT IF EXISTS "UQ_main_account_external_reference"; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
 -- --------------------------------------------------------------------------
 -- Section 2: Enum types (outside transaction for ADD VALUE support)
 -- TypeORM usually creates these, but we ensure they exist.
@@ -179,6 +197,51 @@ INSERT INTO business (id, name, "managerName", email, phone, country, address, u
 
 -- Reset business sequence
 SELECT setval('business_id_seq', (SELECT COALESCE(MAX(id), 1) FROM business));
+
+-- --------------------------------------------------------------------------
+-- Section 3b: XTransfer test customers (penny-api customer table)
+-- These UUIDs map to the symbolic IDs used by the XTransfer e2e suite.
+-- UUID 00000088-0001-4001-8001-000000000001 = cus_xtransfer_test (primary test customer, biz 88)
+-- UUID 00000088-0002-4001-8001-000000000001 = cus_xtransfer_fresh (zero-balance test, MA-013)
+-- NOTE: UUIDs are v4 format (third group 4xxx, fourth group 8/9/a/b) required by @IsUUID('4')
+-- validation on penny-api-restricted list endpoints.
+--
+-- Cleanup main_account rows for test customers so "create" scenarios return 201 on repeated runs.
+-- --------------------------------------------------------------------------
+
+DELETE FROM main_account WHERE customer_id IN (
+  '00000088-0001-4001-8001-000000000001',
+  '00000088-0002-4001-8001-000000000001'
+);
+
+DELETE FROM customer WHERE id IN (
+  '00000088-0001-0001-0001-000000000001',
+  '00000088-0002-0001-0001-000000000001'
+);
+
+INSERT INTO customer (id, type, email, "phoneNumber", country, business, "createdAt", "updatedAt")
+VALUES (
+  '00000088-0001-4001-8001-000000000001',
+  'BUSINESS'::customer_type_enum,
+  'cus-xtransfer-test@nixstock.com',
+  '+1 555 000 8801',
+  'USA',
+  88,
+  NOW(),
+  NOW()
+) ON CONFLICT DO NOTHING;
+
+INSERT INTO customer (id, type, email, "phoneNumber", country, business, "createdAt", "updatedAt")
+VALUES (
+  '00000088-0002-4001-8001-000000000001',
+  'BUSINESS'::customer_type_enum,
+  'cus-xtransfer-fresh@nixstock.com',
+  '+1 555 000 8802',
+  'USA',
+  88,
+  NOW(),
+  NOW()
+) ON CONFLICT DO NOTHING;
 
 -- --------------------------------------------------------------------------
 -- Section 4: configurations table

@@ -131,6 +131,24 @@ final class ExchangeCopterController
         JsonResponse::send($r['body'], $r['status']);
     }
 
+    public static function balance(?string $namespace, string $idCvu): never
+    {
+        $r = ExchangeCopterService::balance($namespace ?? 'default', $idCvu);
+        JsonResponse::send($r['body'], $r['status']);
+    }
+
+    public static function createTransactionTotalPay(?string $namespace, array $body): never
+    {
+        $r = ExchangeCopterService::createTransactionTotalPay($namespace ?? 'default', $body);
+        JsonResponse::send($r['body'], $r['status']);
+    }
+
+    public static function consultaCoelsaIdTotalPay(?string $namespace, string $coelsaId): never
+    {
+        $r = ExchangeCopterService::consultaCoelsaIdTotalPay($namespace ?? 'default', $coelsaId);
+        JsonResponse::send($r['body'], $r['status']);
+    }
+
     public static function setScenario(?string $namespace, array $body): never
     {
         $s = (string)($body['scenario'] ?? ExchangeCopterService::SCENARIO_HAPPY);

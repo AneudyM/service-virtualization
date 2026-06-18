@@ -14,6 +14,7 @@ use App\Controller\AipriseController;
 use App\Controller\BankaoolController;
 use App\Controller\BridgeController;
 use App\Controller\CircleController;
+use App\Controller\CmsBackendController;
 use App\Controller\ComplianceController;
 use App\Controller\ControlPlaneController;
 use App\Controller\EmailController;
@@ -74,8 +75,8 @@ $namespace = $_SERVER['HTTP_X_TEST_NAMESPACE']
 // ── CORS (for browser-based tools/dashboards) ───────────────────────────────
 
 header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, X-Test-Namespace, X-API-KEY');
+header('Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Test-Namespace, X-API-KEY');
 
 if ($method === 'OPTIONS') {
     http_response_code(204);
@@ -172,6 +173,221 @@ $router->get('/control/history/{namespace}', fn($p) =>
 
 $router->post('/control/cleanup-expired', fn() =>
     ControlPlaneController::cleanupExpired()
+);
+
+// ── Virtual CMS Backend API (cms-front drop-in local target) ────────────────
+//
+// Goal: provide a backend-faithful enough API surface for cms-front local and
+// E2E testing. State is namespaced with the same X-Test-Namespace mechanism as
+// the rest of service-virtualization; when the frontend does not send a
+// namespace, the controller uses `cms-front-local`.
+
+$router->get('/cms-backend', fn() =>
+    CmsBackendController::dashboardPage($namespace)
+);
+$router->get('/control/cms-backend', fn() =>
+    CmsBackendController::dashboardPage($namespace)
+);
+$router->get('/control/cms-backend/state', fn() =>
+    CmsBackendController::controlState($namespace)
+);
+$router->post('/control/cms-backend/state', fn() =>
+    CmsBackendController::controlSaveState($namespace, $body)
+);
+$router->post('/control/cms-backend/reset', fn() =>
+    CmsBackendController::controlReset($namespace)
+);
+$router->post('/control/cms-backend/presets/{preset}', fn($p) =>
+    CmsBackendController::controlPreset($namespace, $p['preset'])
+);
+
+$router->post('/auth/passwordless-login', fn() =>
+    CmsBackendController::passwordlessLogin($body)
+);
+$router->post('/auth/password-login', fn() =>
+    CmsBackendController::passwordLogin($namespace, $body)
+);
+$router->post('/auth/passwordless-token', fn() =>
+    CmsBackendController::tokenLogin($namespace)
+);
+$router->post('/auth/login-mfa', fn() =>
+    CmsBackendController::tokenLogin($namespace)
+);
+$router->post('/auth/login-with-recovery-code', fn() =>
+    CmsBackendController::tokenLogin($namespace)
+);
+$router->post('/auth/signup', fn() =>
+    CmsBackendController::tokenLogin($namespace)
+);
+$router->post('/auth/password-signup', fn() =>
+    CmsBackendController::tokenLogin($namespace)
+);
+$router->post('/auth/recovery-password-code', fn() =>
+    CmsBackendController::passwordlessLogin($body)
+);
+$router->post('/auth/change-password', fn() =>
+    CmsBackendController::tokenLogin($namespace)
+);
+$router->post('/auth/change-password-jwt', fn() =>
+    CmsBackendController::tokenLogin($namespace)
+);
+$router->get('/user/me', fn() =>
+    CmsBackendController::currentUser($namespace)
+);
+
+$router->get('/v2/main-accounts/{id}', fn($p) =>
+    CmsBackendController::getMainAccount($namespace, $p['id'])
+);
+$router->get('/v2/main-accounts/{id}/main-accounts', fn($p) =>
+    CmsBackendController::listMainAccounts($namespace, $p['id'])
+);
+$router->get('/v2/main-accounts/{id}/balance', fn($p) =>
+    CmsBackendController::getMainAccountBalance($namespace, $p['id'])
+);
+// cms-front staging currently calls this compatibility alias.
+$router->get('/v2/customers/{id}/{currency}/main-account/balance', fn($p) =>
+    CmsBackendController::getMainAccountBalanceByCurrency($namespace, $p['currency'])
+);
+$router->post('/v2/quotes', fn() =>
+    CmsBackendController::createQuote($namespace, $body)
+);
+$router->get('/v2/quotes/{idOrRef}', fn($p) =>
+    CmsBackendController::getQuote($namespace, $p['idOrRef'])
+);
+$router->post('/v2/transfers/internal', fn() =>
+    CmsBackendController::createInternalTransfer($namespace, $body)
+);
+$router->add('PATCH', '/v2/transfers/update', fn() =>
+    CmsBackendController::updateTransfer($namespace, $body)
+);
+$router->get('/v2/transfers/{idOrRef}', fn($p) =>
+    CmsBackendController::getTransfer($namespace, $p['idOrRef'])
+);
+$router->get('/v2/transfers', fn() =>
+    CmsBackendController::listTransfers($namespace)
+);
+$router->post('/v2/customers/{country}/{customerId}/virtual-accounts', fn($p) =>
+    CmsBackendController::emptyList()
+);
+$router->get('/v2/customers/va/{country}/{vaId}/deposit', fn($p) =>
+    CmsBackendController::getVirtualAccountDeposit($namespace, $p['country'], $p['vaId'])
+);
+$router->get('/v2/customers/main-account/{id}/{country}/customers-vas', fn() =>
+    CmsBackendController::emptyList()
+);
+$router->get('/v2/customers/{customerId}/{country}/accounts-vas', fn() =>
+    CmsBackendController::emptyList()
+);
+$router->post('/v2/payin/create', fn() =>
+    CmsBackendController::createPayin($namespace, $body)
+);
+$router->get('/v2/payin/query/{id}', fn($p) =>
+    CmsBackendController::getPayin($namespace, $p['id'])
+);
+$router->get('/v2/payin/list', fn() =>
+    CmsBackendController::listPayins($namespace)
+);
+$router->post('/v2/payout/create', fn() =>
+    CmsBackendController::createPayout($namespace, $body)
+);
+$router->get('/v2/payout/query/{id}', fn($p) =>
+    CmsBackendController::getPayout($namespace, $p['id'])
+);
+$router->get('/v2/payout/list', fn() =>
+    CmsBackendController::listPayouts($namespace)
+);
+
+$router->get('/transactions', fn() =>
+    CmsBackendController::listTransactions($namespace)
+);
+$router->get('/transactions/customerId', fn() =>
+    CmsBackendController::listTransactions($namespace)
+);
+$router->get('/transactions/searchByCustomer', fn() =>
+    CmsBackendController::listTransactions($namespace)
+);
+$router->get('/transactions/searchByBankAccount', fn() =>
+    CmsBackendController::listTransactions($namespace)
+);
+$router->get('/transactions/searchByTxId', fn() =>
+    CmsBackendController::findTransaction($namespace)
+);
+$router->get('/transactions/logsByTxId', fn() =>
+    CmsBackendController::transactionLogs($namespace)
+);
+$router->post('/transactions/transfer', fn() =>
+    CmsBackendController::createTransaction($namespace, 'transfer', $body)
+);
+$router->post('/transactions/onramp', fn() =>
+    CmsBackendController::createTransaction($namespace, 'onramp', $body)
+);
+$router->post('/transactions/offramp', fn() =>
+    CmsBackendController::createTransaction($namespace, 'offramp', $body)
+);
+$router->post('/transactions/payment', fn() =>
+    CmsBackendController::createTransaction($namespace, 'payment', $body)
+);
+$router->put('/transactions/payment/cancel/{transactionId}', fn() =>
+    CmsBackendController::emptyList()
+);
+$router->get('/transactions/fiat-accounts/id', fn() =>
+    CmsBackendController::listFiatAccountsByCustomerId($namespace)
+);
+$router->post('/transactions/fiat-accounts/id', fn() =>
+    CmsBackendController::createFiatAccount($namespace, $body, $body['data']['customerId'] ?? null)
+);
+$router->get('/transactions/fiat-accounts', fn() =>
+    CmsBackendController::listFiatAccounts($namespace)
+);
+$router->post('/transactions/fiat-accounts', fn() =>
+    CmsBackendController::createFiatAccount($namespace, $body)
+);
+$router->put('/transactions/fiat-accounts/default', fn() =>
+    CmsBackendController::setDefaultFiatAccount($namespace, $body)
+);
+$router->put('/transactions/fiat-accounts/default/{customerId}', fn($p) =>
+    CmsBackendController::setDefaultFiatAccount($namespace, $body, $p['customerId'])
+);
+$router->delete('/transactions/fiat-accounts/{fiatAccountId}', fn($p) =>
+    CmsBackendController::deleteFiatAccount($namespace, $p['fiatAccountId'])
+);
+$router->delete('/transactions/fiat-accounts/{fiatAccountId}/{customerId}', fn($p) =>
+    CmsBackendController::deleteFiatAccount($namespace, $p['fiatAccountId'], $p['customerId'])
+);
+
+$router->get('/liquidation-address', fn() =>
+    CmsBackendController::listLiquidationAddresses($namespace)
+);
+$router->post('/liquidation-address', fn() =>
+    CmsBackendController::createLiquidationAddress($namespace, $body)
+);
+$router->put('/liquidation-address/default', fn() =>
+    CmsBackendController::setDefaultLiquidationAddress($namespace)
+);
+$router->delete('/liquidation-address', fn() =>
+    CmsBackendController::deleteLiquidationAddress($namespace)
+);
+
+$router->get('/client', fn() =>
+    CmsBackendController::clients($namespace)
+);
+$router->get('/roles/allowed', fn() =>
+    CmsBackendController::rolesAllowed()
+);
+$router->get('/profiles', fn() =>
+    CmsBackendController::profiles()
+);
+$router->get('/api-keys/list/dev', fn() =>
+    CmsBackendController::apiKeys()
+);
+$router->get('/api-keys/list/prod', fn() =>
+    CmsBackendController::apiKeys()
+);
+$router->post('/api-keys/create/dev', fn() =>
+    CmsBackendController::apiKeys()
+);
+$router->post('/api-keys/create/prod', fn() =>
+    CmsBackendController::apiKeys()
 );
 
 // ── KYB Approval (quick action via penny-api) ───────────────────────────────
@@ -402,13 +618,27 @@ $router->post('/api/stub/email/email/verification-otp', function () use ($body) 
     EmailController::sendOtp($body);
 });
 
+// Direct-path aliases: cms-backend EmailService uses API_URL_EMAIL_SERVICE as the
+// full base URL (no /api/stub/email prefix), so the actual HTTP calls land here.
+$router->post('/email/verification-otp', function () use ($body) {
+    EmailController::sendOtp($body);
+});
+
 // Password recovery email
 $router->post('/api/stub/email/cms/reset-password', function () use ($body) {
     EmailController::resetPassword($body);
 });
 
+$router->post('/cms/reset-password', function () use ($body) {
+    EmailController::resetPassword($body);
+});
+
 // Password confirmation email
 $router->post('/api/stub/email/cms/confirm-password', function () use ($body) {
+    EmailController::confirmPassword($body);
+});
+
+$router->post('/cms/confirm-password', function () use ($body) {
     EmailController::confirmPassword($body);
 });
 
@@ -770,6 +1000,27 @@ $router->get('/banks/exchangecopter/checkCBUALIAS', fn() =>
 );
 $router->post('/control/exchangecopter/scenario', fn() =>
     ExchangeCopterController::setScenario($namespace ?? 'default', $body)
+);
+// /UAT/ prefix aliases: microserivces-argentina-payex appends /UAT/ to some paths via URL_COPTER.
+$router->post('/banks/exchangecopter/UAT/creacionCVUConRegistroWallets', fn() =>
+    ExchangeCopterController::creacionCvuConRegistroWallets($namespace ?? 'default', $body)
+);
+$router->put('/banks/exchangecopter/UAT/creacionAlias', fn() =>
+    ExchangeCopterController::creacionAlias($namespace ?? 'default', $body)
+);
+$router->get('/banks/exchangecopter/UAT/checkCBUALIAS', fn() =>
+    ExchangeCopterController::checkCbuAlias($_GET['aliasOcvu'] ?? '')
+);
+$router->get('/banks/exchangecopter/UAT/balance', fn() =>
+    ExchangeCopterController::balance($namespace ?? 'default', $_GET['idCvu'] ?? '')
+);
+// TotalPay / COELSA endpoints: hardcoded as api.exchangecopter.com in the TS source;
+// local patch replaces them with COPTER_TOTALPAY_URL which points here.
+$router->post('/banks/exchangecopter/createTransactionTotalPay', fn() =>
+    ExchangeCopterController::createTransactionTotalPay($namespace ?? 'default', $body)
+);
+$router->get('/banks/exchangecopter/consultaCoelsaIdTotalPay', fn() =>
+    ExchangeCopterController::consultaCoelsaIdTotalPay($namespace ?? 'default', $_GET['CoelsaId'] ?? '')
 );
 
 // ── Virtual Transfero (openbanking.bit.one) ────────────────────────────────

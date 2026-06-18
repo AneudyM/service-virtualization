@@ -1,0 +1,112 @@
+{
+    "taskDefinitionArn": "arn:aws:ecs:us-east-1:734534358636:task-definition/virtual-services-dev-task:7",
+    "containerDefinitions": [
+        {
+            "name": "virtual-services-dev",
+            "image": "734534358636.dkr.ecr.us-east-1.amazonaws.com/virtual-services-dev:latest",
+            "cpu": 0,
+            "portMappings": [
+                {
+                    "containerPort": 80,
+                    "hostPort": 80,
+                    "protocol": "tcp",
+                    "name": "virtual-services-dev-80-tcp"
+                }
+            ],
+            "essential": true,
+            "environment": [
+                {
+                    "name": "MYSQL_DATABASE",
+                    "value": "virtual_services_dev"
+                },
+                {
+                    "name": "MYSQL_PASSWORD",
+                    "value": "QB6EK2jVhhQowedoobjmmggb"
+                },
+                {
+                    "name": "MYSQL_PORT",
+                    "value": "3306"
+                },
+                {
+                    "name": "APP_ENV",
+                    "value": "dev"
+                },
+                {
+                    "name": "MYSQL_HOST",
+                    "value": "vs-mysql-dev.cnfqy9ufkb13.us-east-1.rds.amazonaws.com"
+                },
+                {
+                    "name": "MYSQL_USER",
+                    "value": "vsadmin"
+                },
+                {
+                    "name": "APP_BASE_URL",
+                    "value": "https://virtual-services-dev.alfredpay.io"
+                },
+                {
+                    "name": "AIPRISE_AUTO_DELAY",
+                    "value": "10"
+                },
+                {
+                    "name": "AIPRISE_HMAC_KEY",
+                    "value": "REPLACE_WITH_PENNY_API_RESTRICTED_DEV_AIPRISE_WEBHOOK_SECRET"
+                },
+                {
+                    "name": "BANKAOOL_WEBHOOK_URL",
+                    "value": "https://penny-api-ramps-dev.alfredpay.io/v1/bankaool/webhook"
+                },
+                {
+                    "name": "BANKAOOL_DEPOSIT_WEBHOOK_URL",
+                    "value": "https://penny-api-ramps-dev.alfredpay.io/v1/bankaool/webhook"
+                },
+                {
+                    "name": "BANKAOOL_MXN_WEBHOOK_URL",
+                    "value": "https://penny-api-ramps-dev.alfredpay.io/v1/bankaool/webhook"
+                },
+                {
+                    "name": "BANKAOOL_SETTLE_DELAY",
+                    "value": "3"
+                },
+                {
+                    "name": "BANKAOOL_DEPOSIT_DELAY",
+                    "value": "2"
+                },
+                {
+                    "name": "FIREBLOCKS_WEBHOOK_URL",
+                    "value": "https://penny-api-ramps-dev.alfredpay.io/v1/webhook/alfredPay/fireblocks"
+                },
+                {
+                    "name": "KAMBIA_WEBHOOK_URL",
+                    "value": "REPLACE_WITH_RAMPAS_COLOMBIA_DEV_BASE_URL/v1/webhook/webhookKambia"
+                }
+            ],
+            "mountPoints": [],
+            "volumesFrom": [],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/virtual-services-dev",
+                    "awslogs-create-group": "true",
+                    "awslogs-region": "us-east-1",
+                    "awslogs-stream-prefix": "ecs"
+                }
+            },
+            "systemControls": []
+        }
+    ],
+    "family": "virtual-services-dev-task",
+    "taskRoleArn": "arn:aws:iam::734534358636:role/Alfred-task-exec-role",
+    "executionRoleArn": "arn:aws:iam::734534358636:role/Alfred-task-exec-role",
+    "networkMode": "awsvpc",
+    "volumes": [],
+    "placementConstraints": [],
+    "runtimePlatform": {
+        "cpuArchitecture": "X86_64",
+        "operatingSystemFamily": "LINUX"
+    },
+    "requiresCompatibilities": [
+        "FARGATE"
+    ],
+    "cpu": "256",
+    "memory": "512"
+}
